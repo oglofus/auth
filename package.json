@@ -14,7 +14,6 @@
   "author": "Oglofus Ltd",
   "type": "module",
   "main": "dist/index.js",
-  "packageManager": "pnpm@10.11.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
