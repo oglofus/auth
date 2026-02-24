@@ -1,4 +1,4 @@
-# @oglofus/auth
+# @oglofus/auth [![NPM Version](https://img.shields.io/npm/v/%40oglofus%2Fauth)](https://www.npmjs.com/package/@oglofus/auth) [![Publish Package to NPM](https://github.com/oglofus/auth/actions/workflows/release-package.yml/badge.svg)](https://github.com/oglofus/auth/actions/workflows/release-package.yml)
 
 Type-safe, plugin-first authentication core for TypeScript applications.
 
