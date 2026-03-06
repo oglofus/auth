@@ -92,8 +92,6 @@ export type AuthMethodName = PrimaryAuthMethod | (string & {});
 
 export type SecondFactorMethod =
   | "totp"
-  | "email_otp"
-  | "passkey"
   | "recovery_code";
 
 export type AccountDiscoveryMode = "private" | "explicit";
@@ -180,37 +178,45 @@ export type OAuth2AuthenticateInput<P extends string> = {
   provider: P;
   authorizationCode: string;
   redirectUri: string;
+  idempotencyKey?: string;
 };
 
 export type OAuth2RegisterInput<P extends string> = OAuth2AuthenticateInput<P>;
 
-// Keep this intentionally generic to avoid coupling core to specific WebAuthn helper libs.
-export type WebAuthnJson = Record<string, unknown>;
+export type VerifiedPasskeyRegistration = {
+  credentialId: string;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+};
+
+export type VerifiedPasskeyAuthentication = {
+  credentialId: string;
+  nextCounter: number;
+};
 
 export type PasskeyAuthenticateInput = {
   method: "passkey";
-  email?: string;
-  assertion: WebAuthnJson;
+  authentication: VerifiedPasskeyAuthentication;
 };
 
 export type PasskeyRegisterInput<U extends UserBase, K extends keyof U> = {
   method: "passkey";
   email: string;
-  attestation: WebAuthnJson;
+  registration: VerifiedPasskeyRegistration;
 } & LocalProfileFields<U, K>;
 
 export type TwoFactorVerifyInput =
   | { method: "totp"; pendingAuthId: string; code: string }
-  | { method: "email_otp"; pendingAuthId: string; code: string }
-  | { method: "passkey"; pendingAuthId: string; assertion: WebAuthnJson }
   | { method: "recovery_code"; pendingAuthId: string; code: string };
 
 export type ProfileCompletionState<U extends UserBase> = {
   pendingProfileId: string;
-  sourceMethod: "oauth2" | "passkey";
+  sourceMethod: AuthMethodName;
   email?: string;
   missingFields: readonly Extract<keyof U, string>[];
   prefill: Partial<U>;
+  continuation?: Record<string, unknown>;
 };
 
 export type CompleteProfileInput<U extends UserBase> = {
@@ -1443,7 +1449,7 @@ Keep wrappers thin so developer can swap providers later with minimal breakage.
 - OTP/magic-link send failures return explicit `DELIVERY_FAILED` (never silent event-only failures).
 - OTP/magic-link/2FA challenge consumption must be atomic to prevent replay races.
 - OTP verification must be bound to `challengeId` (never resolve active challenge only by email).
-- Passkey verification must validate challenge, origin, RP ID, and signature counter.
+- Passkey verification must validate challenge, origin, RP ID, and signature counter before calling this package; the package consumes already-verified passkey results.
 - OAuth2 callbacks must use `state`/PKCE and be idempotent against duplicate provider callbacks.
 - Session expiration + rotation support.
 - `accountDiscovery.mode = "private"` should avoid leaking user existence through explicit routing messages.
@@ -2347,9 +2353,9 @@ Fix in spec:
 - For email OTP verify/register, require and validate `challengeId` (avoid "latest challenge by email" lookup).
 - For out-of-band methods, use explicit delivery handlers for sending; use events only for observability/policy.
 - Use atomic compare-and-set for one-time credentials/challenges/recovery-code consumption.
-- For passkeys, strictly verify RP ID/origin/challenge and store updated counters after successful assertions.
+- For passkeys, require verified registration/authentication results from a WebAuthn library and store updated counters after successful assertions.
 - For 2FA, bind second-factor verification to `pendingAuthId` and consume challenge on success.
-- For OAuth/passkey partial signups, return `PROFILE_COMPLETION_REQUIRED` with missing fields and pending profile ID.
+- For OAuth partial signups, return `PROFILE_COMPLETION_REQUIRED` with missing fields and pending profile ID.
 - For organizations, enforce tenant scoping and membership status checks before permission/feature/limit evaluation.
 - For organizations, ensure bootstrap and seat-limited membership creation are atomic.
 - For organizations, validate role catalog on startup (default role, owner role, no cyclic inheritance).

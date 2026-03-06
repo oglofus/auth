@@ -11,11 +11,14 @@ import {
   DEFAULT_SESSION_TTL_SECONDS,
   addSeconds,
   createId,
+  deterministicTokenHash,
   normalizeEmailDefault,
   now,
 } from "./utils.js";
 import type {
   AuthConfig,
+  AuthSecurityRateLimitPolicy,
+  AuthSecurityRateLimitScope,
   AuthenticateInputFromPlugins,
   AuthPublicApi,
   AnyPlugin,
@@ -60,6 +63,18 @@ type OrganizationPluginWithConfig = {
   };
 };
 
+const DEFAULT_RATE_LIMIT_POLICIES: Record<
+  AuthSecurityRateLimitScope,
+  AuthSecurityRateLimitPolicy
+> = {
+  discover: { limit: 10, windowSeconds: 60 },
+  register: { limit: 5, windowSeconds: 300 },
+  authenticate: { limit: 10, windowSeconds: 300 },
+  emailOtpRequest: { limit: 3, windowSeconds: 300 },
+  magicLinkRequest: { limit: 3, windowSeconds: 300 },
+  otpVerify: { limit: 10, windowSeconds: 300 },
+};
+
 export class OglofusAuth<
   U extends UserBase,
   P extends readonly AnyPlugin<U>[],
@@ -80,6 +95,7 @@ export class OglofusAuth<
           plugin.createApi({
             adapters: this.config.adapters,
             now,
+            security: this.config.security,
           }),
         );
       }
@@ -91,6 +107,11 @@ export class OglofusAuth<
     request?: AuthRequestContext,
   ): Promise<OperationResult<DiscoverAccountDecision>> {
     const email = this.normalizeEmail(input.email);
+    const rateLimitError = await this.consumeRateLimit("discover", email, request);
+    if (rateLimitError) {
+      return errorOperation(rateLimitError);
+    }
+
     const mode = this.config.accountDiscovery?.mode ?? "private";
 
     if (mode === "private") {
@@ -162,6 +183,22 @@ export class OglofusAuth<
     }
 
     const normalized = this.normalizeAuthInput(input);
+    const rateLimitError = await this.consumeRateLimit(
+      "authenticate",
+      this.getRateLimitIdentity(normalized),
+      request,
+    );
+    if (rateLimitError) {
+      await this.writeAudit({
+        action: "authenticate",
+        method,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: rateLimitError.code,
+      });
+      return errorResult(rateLimitError);
+    }
+
     const validated = this.runValidator(plugin.validators?.authenticate, normalized);
     if (!validated.ok) {
       return validated.result;
@@ -250,6 +287,22 @@ export class OglofusAuth<
     }
 
     const normalized = this.normalizeAuthInput(input);
+    const rateLimitError = await this.consumeRateLimit(
+      "register",
+      this.getRateLimitIdentity(normalized),
+      request,
+    );
+    if (rateLimitError) {
+      await this.writeAudit({
+        action: "register",
+        method,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: rateLimitError.code,
+      });
+      return errorResult(rateLimitError);
+    }
+
     const validated = this.runValidator(plugin.validators?.register, normalized);
     if (!validated.ok) {
       return validated.result;
@@ -318,6 +371,16 @@ export class OglofusAuth<
 
     const record = await pending.findById(input.pendingProfileId);
     if (!record || record.consumedAt || record.expiresAt.getTime() <= now().getTime()) {
+      await this.writeAudit({
+        action: "complete_profile",
+        method: "complete_profile",
+        requestId: request?.requestId,
+        success: false,
+        errorCode: "PROFILE_COMPLETION_EXPIRED",
+        meta: {
+          pendingProfileId: input.pendingProfileId,
+        },
+      });
       return errorResult(
         new AuthError("PROFILE_COMPLETION_EXPIRED", "Profile completion has expired.", 400),
       );
@@ -332,16 +395,19 @@ export class OglofusAuth<
     }
 
     if (missingIssues.length > 0) {
+      await this.writeAudit({
+        action: "complete_profile",
+        method: record.sourceMethod,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: "INVALID_INPUT",
+        meta: {
+          pendingProfileId: input.pendingProfileId,
+        },
+      });
       return errorResult(
         new AuthError("INVALID_INPUT", "Missing required profile fields.", 400, missingIssues),
         missingIssues,
-      );
-    }
-
-    const consumed = await pending.consume(input.pendingProfileId);
-    if (!consumed) {
-      return errorResult(
-        new AuthError("PROFILE_COMPLETION_EXPIRED", "Profile completion has expired.", 400),
       );
     }
 
@@ -356,28 +422,110 @@ export class OglofusAuth<
       merged.emailVerified = false;
     }
 
-    let user: U;
-    if (email) {
-      const existing = await this.config.adapters.users.findByEmail(email);
-      if (existing) {
-        const updated = await this.config.adapters.users.update(existing.id, merged as Partial<U>);
-        if (!updated) {
-          return errorResult(new AuthError("USER_NOT_FOUND", "User not found.", 404));
-        }
-        user = updated;
-      } else {
-        user = await this.config.adapters.users.create(
-          merged as Omit<U, "id" | "createdAt" | "updatedAt">,
-        );
+    const plugin = this.getAuthMethodPlugin(record.sourceMethod);
+    if (record.continuation && (!plugin || !plugin.completePendingProfile)) {
+      const error = new AuthError(
+        "PLUGIN_MISCONFIGURED",
+        `Pending profile for '${record.sourceMethod}' cannot be completed by the current plugin set.`,
+        500,
+      );
+      await this.writeAudit({
+        action: "complete_profile",
+        method: record.sourceMethod,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: error.code,
+        meta: {
+          pendingProfileId: input.pendingProfileId,
+        },
+      });
+      return errorResult(error);
+    }
+
+    const ctx = this.makeContext(request);
+    let finalizedUserId: string | undefined;
+
+    const finalize = async (): Promise<{ ok: true; user: U } | { ok: false; error: AuthError }> => {
+      const persisted = await this.persistCompletedProfile(email, merged as Partial<U>);
+      if (!persisted.ok) {
+        return persisted;
       }
-    } else {
-      user = await this.config.adapters.users.create(
-        merged as Omit<U, "id" | "createdAt" | "updatedAt">,
+
+      finalizedUserId = persisted.user.id;
+
+      if (plugin?.completePendingProfile) {
+        const continuation = await plugin.completePendingProfile(ctx, {
+          record,
+          user: persisted.user,
+        });
+        if (!continuation.ok) {
+          return { ok: false, error: continuation.error };
+        }
+      }
+
+      const consumed = await pending.consume(input.pendingProfileId);
+      if (!consumed) {
+        return {
+          ok: false,
+          error: new AuthError("PROFILE_COMPLETION_EXPIRED", "Profile completion has expired.", 400),
+        };
+      }
+
+      return { ok: true, user: persisted.user };
+    };
+
+    let finalized:
+      | { ok: true; user: U }
+      | { ok: false; error: AuthError };
+    try {
+      finalized = this.config.adapters.withTransaction
+        ? await this.config.adapters.withTransaction(finalize)
+        : await finalize();
+    } catch (error) {
+      const authError = toAuthError(error);
+      await this.writeAudit({
+        action: "complete_profile",
+        method: record.sourceMethod,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: authError.code,
+        userId: finalizedUserId,
+        meta: {
+          pendingProfileId: input.pendingProfileId,
+        },
+      });
+      return errorResult(authError);
+    }
+
+    if (!finalized.ok) {
+      await this.writeAudit({
+        action: "complete_profile",
+        method: record.sourceMethod,
+        requestId: request?.requestId,
+        success: false,
+        errorCode: finalized.error.code,
+        userId: finalizedUserId,
+        meta: {
+          pendingProfileId: input.pendingProfileId,
+        },
+      });
+      return errorResult(
+        finalized.error,
       );
     }
 
-    const sessionId = await this.createSession(user.id);
-    return successResult(user, sessionId);
+    const sessionId = await this.createSession(finalized.user.id);
+    await this.writeAudit({
+      action: "complete_profile",
+      method: record.sourceMethod,
+      requestId: request?.requestId,
+      success: true,
+      userId: finalized.user.id,
+      meta: {
+        pendingProfileId: input.pendingProfileId,
+      },
+    });
+    return successResult(finalized.user, sessionId);
   }
 
   public async validateSession(
@@ -420,10 +568,32 @@ export class OglofusAuth<
     } as T;
   }
 
+  private async persistCompletedProfile(
+    email: string | undefined,
+    merged: Partial<U>,
+  ): Promise<{ ok: true; user: U } | { ok: false; error: AuthError }> {
+    if (email) {
+      const existing = await this.config.adapters.users.findByEmail(email);
+      if (existing) {
+        const updated = await this.config.adapters.users.update(existing.id, merged);
+        if (!updated) {
+          return { ok: false, error: new AuthError("USER_NOT_FOUND", "User not found.", 404) };
+        }
+        return { ok: true, user: updated };
+      }
+    }
+
+    const created = await this.config.adapters.users.create(
+      merged as Omit<U, "id" | "createdAt" | "updatedAt">,
+    );
+    return { ok: true, user: created };
+  }
+
   private makeContext(request?: AuthRequestContext) {
     return {
       adapters: this.config.adapters,
       now,
+      security: this.config.security,
       request,
     };
   }
@@ -459,6 +629,110 @@ export class OglofusAuth<
     }
 
     return api as TwoFactorPluginApi<U>;
+  }
+
+  private resolveRateLimitPolicy(
+    scope: AuthSecurityRateLimitScope,
+  ): AuthSecurityRateLimitPolicy | null {
+    if (!this.config.adapters.rateLimiter) {
+      return null;
+    }
+
+    return this.config.security?.rateLimits?.[scope] ?? DEFAULT_RATE_LIMIT_POLICIES[scope];
+  }
+
+  private async consumeRateLimit(
+    scope: AuthSecurityRateLimitScope,
+    identity: string,
+    request?: AuthRequestContext,
+  ): Promise<AuthError | null> {
+    const policy = this.resolveRateLimitPolicy(scope);
+    if (!policy || !this.config.adapters.rateLimiter) {
+      return null;
+    }
+
+    const result = await this.config.adapters.rateLimiter.consume(
+      this.makeRateLimitKey(scope, identity, request),
+      policy.limit,
+      policy.windowSeconds,
+    );
+
+    if (result.allowed) {
+      return null;
+    }
+
+    return new AuthError(
+      "RATE_LIMITED",
+      "Too many requests.",
+      429,
+      [],
+      result.retryAfterSeconds === undefined
+        ? undefined
+        : { retryAfterSeconds: result.retryAfterSeconds },
+    );
+  }
+
+  private makeRateLimitKey(
+    scope: AuthSecurityRateLimitScope,
+    identity: string,
+    request?: AuthRequestContext,
+  ): string {
+    if (!request?.ip) {
+      return `${scope}:identity:${identity}`;
+    }
+
+    return `${scope}:ip:${request.ip}:identity:${identity}`;
+  }
+
+  private getRateLimitIdentity(input: unknown): string {
+    if (hasEmail(input)) {
+      return this.normalizeEmail(input.email);
+    }
+
+    if (!input || typeof input !== "object") {
+      return "anonymous";
+    }
+
+    const record = input as Record<string, unknown>;
+    if (typeof record.challengeId === "string" && record.challengeId.length > 0) {
+      return `challenge:${record.challengeId}`;
+    }
+
+    if (typeof record.pendingAuthId === "string" && record.pendingAuthId.length > 0) {
+      return `pending:${record.pendingAuthId}`;
+    }
+
+    if (typeof record.token === "string" && record.token.length > 0) {
+      return `token:${deterministicTokenHash(record.token, "rate-limit:magic-link")}`;
+    }
+
+    if (typeof record.provider === "string" && record.provider.length > 0) {
+      return `provider:${record.provider}`;
+    }
+
+    const authentication = record.authentication;
+    if (
+      authentication &&
+      typeof authentication === "object" &&
+      typeof (authentication as Record<string, unknown>).credentialId === "string"
+    ) {
+      return `credential:${String((authentication as Record<string, unknown>).credentialId)}`;
+    }
+
+    const registration = record.registration;
+    if (
+      registration &&
+      typeof registration === "object" &&
+      typeof (registration as Record<string, unknown>).credentialId === "string"
+    ) {
+      return `credential:${String((registration as Record<string, unknown>).credentialId)}`;
+    }
+
+    if (typeof record.method === "string" && record.method.length > 0) {
+      return `method:${record.method}`;
+    }
+
+    return "anonymous";
   }
 
   private runValidator<T>(

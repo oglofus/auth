@@ -2,9 +2,9 @@
 
 Files:
 
-- `auth.ts`: `oauth2Plugin` configured with Arctic `Google` client.
+- `auth.ts`: `oauth2Plugin` configured with Arctic `Google` client via `arcticAuthorizationCodeExchange(...)` and an idempotency adapter.
 - `start-route.ts`: starts OAuth flow and stores state + PKCE verifier in cookies.
-- `callback-route.ts`: validates callback and calls `auth.authenticate`.
+- `callback-route.ts`: validates callback and calls `auth.authenticate` with the callback `state` as `idempotencyKey`.
 
 Required environment variables:
 

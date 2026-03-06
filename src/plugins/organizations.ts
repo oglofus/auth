@@ -8,7 +8,7 @@ import type {
 } from "../types/model.js";
 import type { OrganizationsPluginConfig, OrganizationsPluginApi, DomainPlugin } from "../types/plugins.js";
 import { errorOperation, successOperation, type OperationResult } from "../types/results.js";
-import { addSeconds, createId, createToken, secretHash } from "../core/utils.js";
+import { addSeconds, createId, createToken, deterministicTokenHash } from "../core/utils.js";
 
 export type OrganizationsPluginOptions<
   O extends OrganizationBase,
@@ -135,7 +135,7 @@ export const organizationsPlugin = <
   } = {
     kind: "domain",
     method: "organizations",
-    version: "1.0.0",
+    version: "2.0.0",
     __organizationConfig: config,
     createApi: (ctx) => {
       const ensureActorMembership = async (
@@ -271,7 +271,7 @@ export const organizationsPlugin = <
           }
 
           const rawToken = createToken(32);
-          const tokenHash = secretHash(rawToken, "org-invite");
+          const tokenHash = deterministicTokenHash(rawToken, "org_invite");
           const invite = {
             id: createId(),
             organizationId: input.organizationId,
@@ -308,7 +308,7 @@ export const organizationsPlugin = <
         },
         acceptInvite: async (input) => {
           const invite = await config.handlers.invites.findActiveByTokenHash(
-            secretHash(input.token, "org-invite"),
+            deterministicTokenHash(input.token, "org_invite"),
           );
 
           if (!invite) {

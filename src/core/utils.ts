@@ -1,4 +1,4 @@
-import { pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 export const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
@@ -27,6 +27,9 @@ export const secretHash = (value: string, salt = randomBytes(16).toString("hex")
   const derived = pbkdf2Sync(value, salt, 120_000, 32, "sha256").toString("hex");
   return `${salt}:${derived}`;
 };
+
+export const deterministicTokenHash = (value: string, namespace: string): string =>
+  createHash("sha256").update(namespace).update(":").update(value).digest("hex");
 
 export const secretVerify = (value: string, encoded: string): boolean => {
   const [salt, hash] = encoded.split(":");

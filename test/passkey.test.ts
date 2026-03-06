@@ -69,10 +69,11 @@ test("passkey register and authenticate", async () => {
     method: "passkey",
     email: "passkey@example.com",
     given_name: "Pass",
-    attestation: {
+    registration: {
       credentialId: "cred-1",
       publicKey: "pub",
       counter: 0,
+      transports: ["usb"],
     },
   });
 
@@ -80,9 +81,9 @@ test("passkey register and authenticate", async () => {
 
   const login = await auth.authenticate({
     method: "passkey",
-    assertion: {
+    authentication: {
       credentialId: "cred-1",
-      counter: 1,
+      nextCounter: 1,
     },
   });
 
@@ -99,7 +100,7 @@ test("passkey counter regression is rejected", async () => {
     method: "passkey",
     email: "passkey@example.com",
     given_name: "Pass",
-    attestation: {
+    registration: {
       credentialId: "cred-1",
       publicKey: "pub",
       counter: 0,
@@ -108,22 +109,53 @@ test("passkey counter regression is rejected", async () => {
 
   await auth.authenticate({
     method: "passkey",
-    assertion: {
+    authentication: {
       credentialId: "cred-1",
-      counter: 1,
+      nextCounter: 1,
     },
   });
 
   const replay = await auth.authenticate({
     method: "passkey",
-    assertion: {
+    authentication: {
       credentialId: "cred-1",
-      counter: 1,
+      nextCounter: 1,
     },
   });
 
   assert.equal(replay.ok, false);
   if (!replay.ok) {
     assert.equal(replay.error.code, "PASSKEY_INVALID_ASSERTION");
+  }
+});
+
+test("passkey register rejects duplicate credentials", async () => {
+  const { auth } = createPasskeyEnv();
+
+  await auth.register({
+    method: "passkey",
+    email: "passkey@example.com",
+    given_name: "Pass",
+    registration: {
+      credentialId: "cred-1",
+      publicKey: "pub",
+      counter: 0,
+    },
+  });
+
+  const duplicate = await auth.register({
+    method: "passkey",
+    email: "second@example.com",
+    given_name: "Second",
+    registration: {
+      credentialId: "cred-1",
+      publicKey: "pub-2",
+      counter: 0,
+    },
+  });
+
+  assert.equal(duplicate.ok, false);
+  if (!duplicate.ok) {
+    assert.equal(duplicate.error.code, "CONFLICT");
   }
 });

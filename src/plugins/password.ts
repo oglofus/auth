@@ -28,7 +28,7 @@ export const passwordPlugin = <U extends UserBase, K extends keyof U>(
 > => ({
   kind: "auth_method",
   method: "password",
-  version: "1.0.0",
+  version: "2.0.0",
   supports: {
     register: true,
   },

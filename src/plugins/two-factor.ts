@@ -74,7 +74,7 @@ export const twoFactorPlugin = <U extends UserBase>(
   return {
     kind: "domain",
     method: "two_factor",
-    version: "1.0.0",
+    version: "2.0.0",
     createApi: (ctx) => ({
       evaluatePrimary: async (input, request) => {
         const mustRequire = config.shouldRequire
@@ -171,14 +171,6 @@ export const twoFactorPlugin = <U extends UserBase>(
               ]),
             );
           }
-        } else {
-          return errorOperation(
-            new AuthError(
-              "TWO_FACTOR_INVALID",
-              `Second factor ${input.method} is not implemented in this plugin instance.`,
-              400,
-            ),
-          );
         }
 
         const consumedChallenge = await config.challenges.consume(challenge.id);

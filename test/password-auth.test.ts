@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { OglofusAuth, passwordPlugin, type PasswordCredentialAdapter, type UserBase } from "../src/index.js";
-import { createSessionStore, createUserStore } from "./helpers/in-memory.js";
+import { createRateLimiterStore, createSessionStore, createUserStore } from "./helpers/in-memory.js";
 
 interface User extends UserBase {
   given_name: string;
@@ -115,4 +115,96 @@ test("password authenticate fails on invalid credentials", async () => {
   }
 
   assert.equal(login.error.code, "INVALID_CREDENTIALS");
+});
+
+test("password register and authenticate are rate limited when rateLimiter is configured", async () => {
+  const users = createUserStore<User>();
+  const sessions = createSessionStore();
+  const rateLimiter = createRateLimiterStore();
+  const credentialStore = new Map<string, string>();
+
+  const credentials: PasswordCredentialAdapter = {
+    getPasswordHash: async (userId) => credentialStore.get(userId) ?? null,
+    setPasswordHash: async (userId, passwordHash) => {
+      credentialStore.set(userId, passwordHash);
+    },
+  };
+
+  const auth = new OglofusAuth({
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      rateLimiter: rateLimiter.adapter,
+    },
+    plugins: [
+      passwordPlugin<User, "given_name">({
+        requiredProfileFields: ["given_name"] as const,
+        credentials,
+      }),
+    ] as const,
+    validateConfigOnStart: true,
+  });
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = await auth.register(
+      {
+        method: "password",
+        email: "blocked@example.com",
+        password: "super-secret",
+        given_name: "Nikos",
+      },
+      { ip: "203.0.113.11" },
+    );
+    assert.equal(attempt === 0 ? result.ok : result.ok === false, true);
+  }
+
+  const blockedRegister = await auth.register(
+    {
+      method: "password",
+      email: "blocked@example.com",
+      password: "super-secret",
+      given_name: "Blocked",
+    },
+    { ip: "203.0.113.11" },
+  );
+
+  assert.equal(blockedRegister.ok, false);
+  if (!blockedRegister.ok) {
+    assert.equal(blockedRegister.error.code, "RATE_LIMITED");
+    assert.equal(blockedRegister.error.meta?.retryAfterSeconds, 300);
+  }
+
+  await auth.register({
+    method: "password",
+    email: "nikos@example.com",
+    password: "super-secret",
+    given_name: "Nikos",
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const login = await auth.authenticate(
+      {
+        method: "password",
+        email: "nikos@example.com",
+        password: "wrong-password",
+      },
+      { ip: "203.0.113.12" },
+    );
+    assert.equal(login.ok, false);
+  }
+
+  const blockedLogin = await auth.authenticate(
+    {
+      method: "password",
+      email: "nikos@example.com",
+      password: "wrong-password",
+    },
+    { ip: "203.0.113.12" },
+  );
+
+  assert.equal(blockedLogin.ok, false);
+  if (!blockedLogin.ok) {
+    assert.equal(blockedLogin.error.code, "RATE_LIMITED");
+    assert.equal(blockedLogin.error.meta?.retryAfterSeconds, 300);
+  }
 });

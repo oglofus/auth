@@ -8,7 +8,7 @@ import {
   type MagicLinkDeliveryHandler,
   type UserBase,
 } from "../src/index.js";
-import { createSessionStore, createUserStore } from "./helpers/in-memory.js";
+import { createRateLimiterStore, createSessionStore, createUserStore } from "./helpers/in-memory.js";
 
 interface User extends UserBase {
   given_name: string;
@@ -120,5 +120,77 @@ test("magic link register new account", async () => {
   assert.equal(register.ok, true);
   if (register.ok) {
     assert.equal(register.user.email, "new@example.com");
+  }
+});
+
+test("magic link request is rate limited when rateLimiter is configured", async () => {
+  const users = createUserStore<User>();
+  const sessions = createSessionStore();
+  const rateLimiter = createRateLimiterStore();
+  const tokens = new Map<string, Awaited<ReturnType<MagicLinkAdapter["createToken"]>>>();
+
+  const auth = new OglofusAuth({
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      rateLimiter: rateLimiter.adapter,
+    },
+    plugins: [
+      magicLinkPlugin<User, "given_name">({
+        requiredProfileFields: ["given_name"] as const,
+        links: {
+          createToken: async (input) => {
+            const token = {
+              id: crypto.randomUUID(),
+              userId: input.userId,
+              email: input.email,
+              tokenHash: input.tokenHash,
+              expiresAt: input.expiresAt,
+              consumedAt: null,
+            };
+            tokens.set(token.id, token);
+            return token;
+          },
+          findActiveTokenByHash: async (tokenHash) =>
+            [...tokens.values()].find((token) => token.tokenHash === tokenHash && token.consumedAt === null) ?? null,
+          consumeToken: async (tokenId) => {
+            const found = tokens.get(tokenId);
+            if (!found || found.consumedAt !== null) {
+              return false;
+            }
+            tokens.set(tokenId, {
+              ...found,
+              consumedAt: new Date(),
+            });
+            return true;
+          },
+        },
+        delivery: {
+          send: async () => ({ accepted: true }),
+        },
+        baseVerifyUrl: "https://example.com/magic",
+      }),
+    ] as const,
+    validateConfigOnStart: true,
+  });
+
+  const api = auth.method("magic_link");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await api.request(
+      { email: "new@example.com" },
+      { ip: "203.0.113.15" },
+    );
+    assert.equal(result.ok, true);
+  }
+
+  const blocked = await api.request(
+    { email: "new@example.com" },
+    { ip: "203.0.113.15" },
+  );
+
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) {
+    assert.equal(blocked.error.code, "RATE_LIMITED");
+    assert.equal(blocked.error.meta?.retryAfterSeconds, 300);
   }
 });

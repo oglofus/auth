@@ -22,7 +22,7 @@ export type PrimaryAuthMethod =
 
 export type AuthMethodName = PrimaryAuthMethod | (string & {});
 
-export type SecondFactorMethod = "totp" | "email_otp" | "passkey" | "recovery_code";
+export type SecondFactorMethod = "totp" | "recovery_code";
 
 export type AccountDiscoveryMode = "private" | "explicit";
 
@@ -108,36 +108,47 @@ export type OAuth2AuthenticateInput<P extends string> = {
   authorizationCode: string;
   redirectUri: string;
   codeVerifier?: string;
+  idempotencyKey?: string;
 };
 
 export type OAuth2RegisterInput<P extends string> = OAuth2AuthenticateInput<P>;
 
 export type WebAuthnJson = Record<string, unknown>;
 
+export type VerifiedPasskeyRegistration = {
+  credentialId: string;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+};
+
+export type VerifiedPasskeyAuthentication = {
+  credentialId: string;
+  nextCounter: number;
+};
+
 export type PasskeyAuthenticateInput = {
   method: "passkey";
-  email?: string;
-  assertion: WebAuthnJson;
+  authentication: VerifiedPasskeyAuthentication;
 };
 
 export type PasskeyRegisterInput<U extends UserBase, K extends keyof U> = {
   method: "passkey";
   email: string;
-  attestation: WebAuthnJson;
+  registration: VerifiedPasskeyRegistration;
 } & LocalProfileFields<U, K>;
 
 export type TwoFactorVerifyInput =
   | { method: "totp"; pendingAuthId: string; code: string }
-  | { method: "email_otp"; pendingAuthId: string; code: string }
-  | { method: "passkey"; pendingAuthId: string; assertion: WebAuthnJson }
   | { method: "recovery_code"; pendingAuthId: string; code: string };
 
 export type ProfileCompletionState<U extends UserBase> = {
   pendingProfileId: string;
-  sourceMethod: "oauth2" | "passkey";
+  sourceMethod: AuthMethodName;
   email?: string;
   missingFields: readonly Extract<keyof U, string>[];
   prefill: Partial<U>;
+  continuation?: Record<string, unknown>;
 };
 
 export type CompleteProfileInput<U extends UserBase> = {

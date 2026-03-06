@@ -8,6 +8,7 @@ import type {
   MembershipBase,
   OrganizationBase,
   OrganizationEntitlementSnapshot,
+  ProfileCompletionState,
   SecondFactorMethod,
   TwoFactorVerifyInput,
   UserBase,
@@ -17,6 +18,7 @@ import type { AuthResult, OperationResult } from "./results.js";
 export interface AuthPluginContext<U extends UserBase> {
   adapters: CoreAdapters<U>;
   now(): Date;
+  security?: AuthSecurityConfig;
   request?: AuthRequestContext;
 }
 
@@ -29,6 +31,11 @@ export interface BasePlugin<
   method: Method;
   version: string;
   createApi?: (ctx: Omit<AuthPluginContext<U>, "request">) => ExposedApi;
+}
+
+export interface CompletePendingProfileInput<U extends UserBase> {
+  record: ProfileCompletionState<U>;
+  user: U;
 }
 
 export interface AuthMethodPlugin<
@@ -58,6 +65,10 @@ export interface AuthMethodPlugin<
     ctx: AuthPluginContext<U>,
     input: AuthenticateInput,
   ) => Promise<OperationResult<{ user: U }>>;
+  completePendingProfile?: (
+    ctx: AuthPluginContext<U>,
+    input: CompletePendingProfileInput<U>,
+  ) => Promise<OperationResult<void>>;
 }
 
 export interface DomainPlugin<
@@ -189,6 +200,24 @@ export interface OrganizationsPluginConfig<
   handlers: OrganizationsPluginHandlers<O, Role, M, Permission, Feature, LimitKey>;
 }
 
+export type AuthSecurityRateLimitScope =
+  | "discover"
+  | "register"
+  | "authenticate"
+  | "emailOtpRequest"
+  | "magicLinkRequest"
+  | "otpVerify";
+
+export interface AuthSecurityRateLimitPolicy {
+  limit: number;
+  windowSeconds: number;
+}
+
+export interface AuthSecurityConfig {
+  rateLimits?: Partial<Record<AuthSecurityRateLimitScope, AuthSecurityRateLimitPolicy>>;
+  oauth2IdempotencyTtlSeconds?: number;
+}
+
 export type AnyMethodPlugin<U extends UserBase> = AuthMethodPlugin<string, any, any, U, any>;
 export type AnyDomainPlugin<U extends UserBase> = DomainPlugin<string, U, any>;
 export type AnyPlugin<U extends UserBase> = AnyMethodPlugin<U> | AnyDomainPlugin<U>;
@@ -231,6 +260,7 @@ export interface AuthConfig<U extends UserBase, P extends readonly AnyPlugin<U>[
   session?: {
     ttlSeconds?: number;
   };
+  security?: AuthSecurityConfig;
   validateConfigOnStart?: boolean;
 }
 

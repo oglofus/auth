@@ -9,6 +9,7 @@ import {
   type UserBase,
 } from "../src/index.js";
 import {
+  createIdempotencyStore,
   createPendingProfileStore,
   createSessionStore,
   createUserStore,
@@ -19,16 +20,32 @@ interface User extends UserBase {
   family_name: string;
 }
 
-test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProfile finishes auth", async () => {
+const createTokens = () =>
+  new OAuth2Tokens({
+    access_token: "access-token",
+    refresh_token: "refresh-token",
+    token_type: "bearer",
+  });
+
+test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProfile links the account before consume", async () => {
   const users = createUserStore<User>();
   const sessions = createSessionStore();
   const pending = createPendingProfileStore<User>();
+  const order: string[] = [];
+  const redirectUris: string[] = [];
+
+  const originalConsume = pending.adapter.consume;
+  pending.adapter.consume = async (pendingProfileId) => {
+    order.push("consume");
+    return originalConsume(pendingProfileId);
+  };
 
   const linkedAccounts = new Map<string, string>();
   const accounts: OAuth2AccountAdapter<"google"> = {
     findUserId: async (provider, providerUserId) =>
       linkedAccounts.get(`${provider}:${providerUserId}`),
     linkAccount: async (input) => {
+      order.push("linkAccount");
       linkedAccounts.set(`${input.provider}:${input.providerUserId}`, input.userId);
     },
   };
@@ -43,13 +60,9 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
       oauth2Plugin<User, "google", "given_name" | "family_name">({
         providers: {
           google: {
-            client: {
-              validateAuthorizationCode: async () =>
-                new OAuth2Tokens({
-                  access_token: "access-token",
-                  refresh_token: "refresh-token",
-                  token_type: "bearer",
-                }),
+            exchangeAuthorizationCode: async (input) => {
+              redirectUris.push(input.redirectUri);
+              return createTokens();
             },
             resolveProfile: async () => ({
               providerUserId: "google-user-1",
@@ -100,32 +113,45 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
 
   assert.equal(step2.user.email, "nikos@example.com");
   assert.equal(step2.user.family_name, "Gram");
+  assert.equal(linkedAccounts.get("google:google-user-1"), step2.user.id);
+  assert.equal(pending.byId.get(pendingProfileId)?.consumedAt instanceof Date, true);
+  assert.deepEqual(order, ["linkAccount", "consume"]);
+  assert.deepEqual(redirectUris, ["https://example.com/callback"]);
 });
 
-test("completeProfile returns USER_NOT_FOUND when user update returns nullish", async () => {
-  const existingUser: User = {
-    id: "user_123",
-    email: "nikos@example.com",
-    emailVerified: true,
-    given_name: "Nikos",
-    family_name: "Before",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
-  const users = createUserStore<User>([existingUser]);
-  users.adapter.update = async () => undefined;
-
+test("completeProfile leaves pending profile reusable when oauth account linking fails", async () => {
+  const users = createUserStore<User>();
   const sessions = createSessionStore();
   const pending = createPendingProfileStore<User>();
+
+  let shouldFailLink = true;
+  const linkedAccounts = new Map<string, string>();
+  const accounts: OAuth2AccountAdapter<"google"> = {
+    findUserId: async (provider, providerUserId) =>
+      linkedAccounts.get(`${provider}:${providerUserId}`),
+    linkAccount: async (input) => {
+      if (shouldFailLink) {
+        throw new Error("link failed");
+      }
+
+      linkedAccounts.set(`${input.provider}:${input.providerUserId}`, input.userId);
+    },
+  };
+
   await pending.adapter.create({
     pendingProfileId: "pending_123",
     sourceMethod: "oauth2",
-    email: existingUser.email,
+    email: "nikos@example.com",
     missingFields: ["family_name"],
     prefill: {
-      given_name: existingUser.given_name,
-      emailVerified: existingUser.emailVerified,
+      given_name: "Nikos",
+      emailVerified: true,
+    },
+    continuation: {
+      provider: "google",
+      providerUserId: "google-user-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
     },
     expiresAt: new Date(Date.now() + 60_000),
     consumedAt: null,
@@ -137,19 +163,161 @@ test("completeProfile returns USER_NOT_FOUND when user update returns nullish", 
       sessions: sessions.adapter,
       pendingProfiles: pending.adapter,
     },
-    plugins: [] as const,
+    plugins: [
+      oauth2Plugin<User, "google", "given_name" | "family_name">({
+        providers: {
+          google: {
+            exchangeAuthorizationCode: async () => createTokens(),
+            resolveProfile: async () => ({
+              providerUserId: "google-user-1",
+              email: "nikos@example.com",
+              emailVerified: true,
+              profile: {
+                given_name: "Nikos",
+                family_name: "Gram",
+              },
+            }),
+          },
+        },
+        accounts,
+        requiredProfileFields: ["given_name", "family_name"] as const,
+      }),
+    ] as const,
     validateConfigOnStart: true,
   });
 
-  const result = await auth.completeProfile({
+  const failed = await auth.completeProfile({
     pendingProfileId: "pending_123",
     profile: {
       family_name: "Gram",
     },
   });
 
+  assert.equal(failed.ok, false);
+  if (!failed.ok) {
+    assert.equal(failed.error.code, "INTERNAL_ERROR");
+  }
+  assert.equal(pending.byId.get("pending_123")?.consumedAt, null);
+
+  shouldFailLink = false;
+
+  const retried = await auth.completeProfile({
+    pendingProfileId: "pending_123",
+    profile: {
+      family_name: "Gram",
+    },
+  });
+
+  assert.equal(retried.ok, true);
+  if (!retried.ok) {
+    return;
+  }
+
+  assert.equal(linkedAccounts.get("google:google-user-1"), retried.user.id);
+  assert.equal(pending.byId.get("pending_123")?.consumedAt instanceof Date, true);
+});
+
+test("oauth2 duplicate callback with the same idempotency key returns conflict", async () => {
+  const users = createUserStore<User>();
+  const sessions = createSessionStore();
+  const idempotency = createIdempotencyStore();
+
+  const auth = new OglofusAuth({
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      idempotency: idempotency.adapter,
+    },
+    plugins: [
+      oauth2Plugin<User, "google", never>({
+        providers: {
+          google: {
+            exchangeAuthorizationCode: async () => createTokens(),
+            resolveProfile: async () => ({
+              providerUserId: "google-user-1",
+              email: "nikos@example.com",
+              emailVerified: true,
+              profile: {},
+            }),
+          },
+        },
+        accounts: {
+          findUserId: async () => null,
+          linkAccount: async () => {},
+        },
+      }),
+    ] as const,
+    validateConfigOnStart: true,
+  });
+
+  const first = await auth.authenticate({
+    method: "oauth2",
+    provider: "google",
+    authorizationCode: "code-1",
+    redirectUri: "https://example.com/callback",
+    codeVerifier: "code-verifier",
+    idempotencyKey: "state-123",
+  });
+  assert.equal(first.ok, true);
+
+  const duplicate = await auth.authenticate({
+    method: "oauth2",
+    provider: "google",
+    authorizationCode: "code-1",
+    redirectUri: "https://example.com/callback",
+    codeVerifier: "code-verifier",
+    idempotencyKey: "state-123",
+  });
+
+  assert.equal(duplicate.ok, false);
+  if (!duplicate.ok) {
+    assert.equal(duplicate.error.code, "CONFLICT");
+  }
+});
+
+test("oauth2 requires idempotencyKey when idempotency adapter is configured", async () => {
+  const users = createUserStore<User>();
+  const sessions = createSessionStore();
+  const idempotency = createIdempotencyStore();
+
+  const auth = new OglofusAuth({
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      idempotency: idempotency.adapter,
+    },
+    plugins: [
+      oauth2Plugin<User, "google", never>({
+        providers: {
+          google: {
+            exchangeAuthorizationCode: async () => createTokens(),
+            resolveProfile: async () => ({
+              providerUserId: "google-user-1",
+              email: "nikos@example.com",
+              emailVerified: true,
+              profile: {},
+            }),
+          },
+        },
+        accounts: {
+          findUserId: async () => null,
+          linkAccount: async () => {},
+        },
+      }),
+    ] as const,
+    validateConfigOnStart: true,
+  });
+
+  const result = await auth.authenticate({
+    method: "oauth2",
+    provider: "google",
+    authorizationCode: "code-1",
+    redirectUri: "https://example.com/callback",
+    codeVerifier: "code-verifier",
+  });
+
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.equal(result.error.code, "USER_NOT_FOUND");
+    assert.equal(result.error.code, "INVALID_INPUT");
   }
 });

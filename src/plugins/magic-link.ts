@@ -8,7 +8,7 @@ import type {
 } from "../types/model.js";
 import type { AuthMethodPlugin, MagicLinkPluginApi } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import { addSeconds, createId, createToken, secretHash, secretVerify } from "../core/utils.js";
+import { addSeconds, createId, createToken, deterministicTokenHash } from "../core/utils.js";
 import { cloneWithout } from "../core/utils.js";
 import { ensureFields } from "../core/validators.js";
 
@@ -19,6 +19,17 @@ export type MagicLinkPluginConfig<U extends UserBase, K extends keyof U> = {
   tokenTtlSeconds?: number;
   baseVerifyUrl: string;
 };
+
+const MAGIC_LINK_REQUEST_POLICY = { limit: 3, windowSeconds: 300 };
+
+const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
+  new AuthError(
+    "RATE_LIMITED",
+    "Too many requests.",
+    429,
+    [],
+    retryAfterSeconds === undefined ? undefined : { retryAfterSeconds },
+  );
 
 export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
   config: MagicLinkPluginConfig<U, K>,
@@ -38,26 +49,11 @@ export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
     | { ok: true; userId?: string; email: string; tokenId: string }
     | { ok: false; error: AuthError }
   > => {
-    const hashed = secretHash(token, "magic-link");
-    // `secretHash` is salted; this branch should use deterministic hash.
-    // We keep compatibility by also trying deterministic fallback below.
-    const deterministicHash = secretHash(token, "deterministic_magic_link");
-
-    const candidate =
-      (await config.links.findActiveTokenByHash(deterministicHash)) ??
-      (await config.links.findActiveTokenByHash(hashed));
+    const candidate = await config.links.findActiveTokenByHash(
+      deterministicTokenHash(token, "magic_link"),
+    );
 
     if (!candidate) {
-      return {
-        ok: false,
-        error: new AuthError("MAGIC_LINK_INVALID", "Invalid magic link.", 400, [
-          createIssue("Invalid token", ["token"]),
-        ]),
-      };
-    }
-
-    // Defensive verify for deterministic hash implementations.
-    if (!secretVerify(token, candidate.tokenHash) && candidate.tokenHash !== deterministicHash) {
       return {
         ok: false,
         error: new AuthError("MAGIC_LINK_INVALID", "Invalid magic link.", 400, [
@@ -94,7 +90,7 @@ export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
   return {
     kind: "auth_method",
     method: "magic_link",
-    version: "1.0.0",
+    version: "2.0.0",
     supports: {
       register: true,
     },
@@ -105,9 +101,23 @@ export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
     createApi: (ctx) => ({
       request: async (input, request) => {
         const email = input.email.trim().toLowerCase();
+        if (ctx.adapters.rateLimiter) {
+          const policy = ctx.security?.rateLimits?.magicLinkRequest ?? MAGIC_LINK_REQUEST_POLICY;
+          const limited = await ctx.adapters.rateLimiter.consume(
+            request?.ip
+              ? `magicLinkRequest:ip:${request.ip}:identity:${email}`
+              : `magicLinkRequest:identity:${email}`,
+            policy.limit,
+            policy.windowSeconds,
+          );
+          if (!limited.allowed) {
+            return errorOperation(createRateLimitedError(limited.retryAfterSeconds));
+          }
+        }
+
         const user = await ctx.adapters.users.findByEmail(email);
         const rawToken = createToken();
-        const tokenHash = secretHash(rawToken, "deterministic_magic_link");
+        const tokenHash = deterministicTokenHash(rawToken, "magic_link");
         const expiresAt = addSeconds(ctx.now(), ttl);
 
         const token = await config.links.createToken({

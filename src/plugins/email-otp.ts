@@ -28,8 +28,19 @@ export type EmailOtpPluginConfig<U extends UserBase, K extends keyof U> = {
 };
 
 const PENDING_PREFIX = "pending:";
+const EMAIL_OTP_REQUEST_POLICY = { limit: 3, windowSeconds: 300 };
+const OTP_VERIFY_POLICY = { limit: 10, windowSeconds: 300 };
 
 const isPendingUserId = (value: string): boolean => value.startsWith(PENDING_PREFIX);
+
+const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
+  new AuthError(
+    "RATE_LIMITED",
+    "Too many requests.",
+    429,
+    [],
+    retryAfterSeconds === undefined ? undefined : { retryAfterSeconds },
+  );
 
 export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
   config: EmailOtpPluginConfig<U, K>,
@@ -48,11 +59,33 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
     challengeId: string,
     code: string,
     now: Date,
+    request?: { ip?: string },
+    security?: { rateLimits?: { otpVerify?: { limit: number; windowSeconds: number } } },
+    rateLimiter?: {
+      consume(key: string, limit: number, windowSeconds: number): Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+    },
   ): Promise<
     | { ok: true; userId: string; email: string }
     | { ok: false; error: AuthError }
   > => {
     const challenge = await config.otp.findChallengeById(challengeId);
+    if (rateLimiter) {
+      const policy = security?.rateLimits?.otpVerify ?? OTP_VERIFY_POLICY;
+      const result = await rateLimiter.consume(
+        request?.ip
+          ? `otpVerify:ip:${request.ip}:identity:${challenge?.email ?? `challenge:${challengeId}`}`
+          : `otpVerify:identity:${challenge?.email ?? `challenge:${challengeId}`}`,
+        policy.limit,
+        policy.windowSeconds,
+      );
+      if (!result.allowed) {
+        return {
+          ok: false,
+          error: createRateLimitedError(result.retryAfterSeconds),
+        };
+      }
+    }
+
     if (!challenge) {
       return {
         ok: false,
@@ -116,7 +149,7 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
   return {
     kind: "auth_method",
     method: "email_otp",
-    version: "1.0.0",
+    version: "2.0.0",
     supports: {
       register: true,
     },
@@ -127,6 +160,20 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
     createApi: (ctx) => ({
       request: async (input, request) => {
         const email = input.email.trim().toLowerCase();
+        if (ctx.adapters.rateLimiter) {
+          const policy = ctx.security?.rateLimits?.emailOtpRequest ?? EMAIL_OTP_REQUEST_POLICY;
+          const limited = await ctx.adapters.rateLimiter.consume(
+            request?.ip
+              ? `emailOtpRequest:ip:${request.ip}:identity:${email}`
+              : `emailOtpRequest:identity:${email}`,
+            policy.limit,
+            policy.windowSeconds,
+          );
+          if (!limited.allowed) {
+            return errorOperation(createRateLimitedError(limited.retryAfterSeconds));
+          }
+        }
+
         const user = await ctx.adapters.users.findByEmail(email);
 
         const code = createNumericCode(codeLength);
@@ -172,7 +219,14 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
       },
     }),
     register: async (ctx, input) => {
-      const verified = await verifyChallenge(input.challengeId, input.code, ctx.now());
+      const verified = await verifyChallenge(
+        input.challengeId,
+        input.code,
+        ctx.now(),
+        ctx.request,
+        ctx.security,
+        ctx.adapters.rateLimiter,
+      );
       if (!verified.ok) {
         return errorOperation(verified.error);
       }
@@ -206,7 +260,14 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
       return successOperation({ user });
     },
     authenticate: async (ctx, input) => {
-      const verified = await verifyChallenge(input.challengeId, input.code, ctx.now());
+      const verified = await verifyChallenge(
+        input.challengeId,
+        input.code,
+        ctx.now(),
+        ctx.request,
+        ctx.security,
+        ctx.adapters.rateLimiter,
+      );
       if (!verified.ok) {
         return errorOperation(verified.error);
       }

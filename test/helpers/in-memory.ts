@@ -2,9 +2,11 @@ import type {
   AuditAdapter,
   AuditRecord,
   IdentityAdapter,
+  IdempotencyAdapter,
   OrganizationSessionAdapter,
   PendingProfileAdapter,
   PendingProfileRecord,
+  RateLimiterAdapter,
   SessionAdapter,
   UserAdapter,
 } from "../../src/types/adapters.js";
@@ -181,6 +183,51 @@ export const createAuditStore = () => {
 
   return {
     records,
+    adapter,
+  };
+};
+
+export const createRateLimiterStore = () => {
+  const counts = new Map<string, number>();
+
+  const adapter: RateLimiterAdapter = {
+    consume: async (key, limit, windowSeconds) => {
+      const next = (counts.get(key) ?? 0) + 1;
+      counts.set(key, next);
+
+      if (next <= limit) {
+        return { allowed: true };
+      }
+
+      return {
+        allowed: false,
+        retryAfterSeconds: windowSeconds,
+      };
+    },
+  };
+
+  return {
+    counts,
+    adapter,
+  };
+};
+
+export const createIdempotencyStore = () => {
+  const seen = new Set<string>();
+
+  const adapter: IdempotencyAdapter = {
+    checkAndSet: async (key) => {
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    },
+  };
+
+  return {
+    seen,
     adapter,
   };
 };

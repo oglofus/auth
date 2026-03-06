@@ -5,7 +5,6 @@ import type {
   PasskeyAuthenticateInput,
   PasskeyRegisterInput,
   UserBase,
-  WebAuthnJson,
 } from "../types/model.js";
 import type { AuthMethodPlugin } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
@@ -15,16 +14,6 @@ import { ensureFields } from "../core/validators.js";
 export type PasskeyPluginConfig<U extends UserBase, K extends keyof U> = {
   requiredProfileFields: readonly K[];
   passkeys: PasskeyAdapter;
-};
-
-const getString = (obj: WebAuthnJson, key: string): string | null => {
-  const value = obj[key];
-  return typeof value === "string" && value.length > 0 ? value : null;
-};
-
-const getNumber = (obj: WebAuthnJson, key: string): number | null => {
-  const value = obj[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 };
 
 export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
@@ -37,20 +26,20 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
 > => ({
   kind: "auth_method",
   method: "passkey",
-  version: "1.0.0",
+  version: "2.0.0",
   supports: {
     register: true,
   },
   issueFields: {
-    authenticate: ["email", "assertion"],
-    register: ["email", "attestation", ...config.requiredProfileFields.map(String)] as any,
+    authenticate: ["authentication"],
+    register: ["email", "registration", ...config.requiredProfileFields.map(String)] as any,
   },
   authenticate: async (ctx, input) => {
-    const credentialId = getString(input.assertion, "credentialId");
+    const credentialId = input.authentication.credentialId;
     if (!credentialId) {
       return errorOperation(
-        new AuthError("PASSKEY_INVALID_ASSERTION", "Credential id missing from assertion.", 400, [
-          createIssue("credentialId is required", ["assertion", "credentialId"]),
+        new AuthError("PASSKEY_INVALID_ASSERTION", "Credential id missing from verified passkey authentication.", 400, [
+          createIssue("credentialId is required", ["authentication", "credentialId"]),
         ]),
       );
     }
@@ -62,19 +51,17 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
       );
     }
 
-    const counter = getNumber(input.assertion, "counter");
-    if (counter !== null) {
-      if (counter <= credential.counter) {
-        return errorOperation(
-          new AuthError(
-            "PASSKEY_INVALID_ASSERTION",
-            "Passkey counter regression detected.",
-            400,
-          ),
-        );
-      }
-      await config.passkeys.updateCounter(credential.credentialId, counter);
+    if (input.authentication.nextCounter <= credential.counter) {
+      return errorOperation(
+        new AuthError(
+          "PASSKEY_INVALID_ASSERTION",
+          "Passkey counter regression detected.",
+          400,
+        ),
+      );
     }
+
+    await config.passkeys.updateCounter(credential.credentialId, input.authentication.nextCounter);
 
     const user = await ctx.adapters.users.findById(credential.userId);
     if (!user) {
@@ -92,14 +79,21 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
       return errorOperation(requiredError);
     }
 
-    const credentialId = getString(input.attestation, "credentialId");
-    const publicKey = getString(input.attestation, "publicKey");
-    const counter = getNumber(input.attestation, "counter") ?? 0;
+    const { credentialId, publicKey, counter, transports } = input.registration;
 
     if (!credentialId || !publicKey) {
       return errorOperation(
-        new AuthError("PASSKEY_INVALID_ATTESTATION", "Invalid passkey attestation.", 400, [
-          createIssue("credentialId/publicKey is required", ["attestation"]),
+        new AuthError("PASSKEY_INVALID_ATTESTATION", "Invalid verified passkey registration.", 400, [
+          createIssue("credentialId/publicKey is required", ["registration"]),
+        ]),
+      );
+    }
+
+    const existingCredential = await config.passkeys.findByCredentialId(credentialId);
+    if (existingCredential) {
+      return errorOperation(
+        new AuthError("CONFLICT", "Passkey credential already exists.", 409, [
+          createIssue("credentialId already registered", ["registration", "credentialId"]),
         ]),
       );
     }
@@ -108,7 +102,7 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
     if (!user) {
       const payload = cloneWithout(input as unknown as Record<string, unknown>, [
         "method",
-        "attestation",
+        "registration",
       ] as const);
       payload.emailVerified = true;
 
@@ -121,6 +115,7 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
       credentialId,
       publicKey,
       counter,
+      transports,
       createdAt: ctx.now(),
     });
 

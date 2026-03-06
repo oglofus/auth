@@ -18,6 +18,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authorizationCode: code,
     redirectUri: process.env.GOOGLE_REDIRECT_URI!,
     codeVerifier,
+    idempotencyKey: state,
   });
 
   if (!result.ok) {

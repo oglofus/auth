@@ -8,8 +8,8 @@ Type-safe, plugin-first authentication core for TypeScript applications.
 - Strongly typed register/authenticate payloads inferred from enabled plugins.
 - Path-based issue model (`{ message, path }`) for field-level error mapping.
 - Built-in methods: password, email OTP, magic link, OAuth2, passkey.
-- Built-in domain plugins: two-factor auth (TOTP/recovery), organizations/RBAC.
-- Framework-agnostic core (works with Next.js, SvelteKit, Workers, Node servers).
+- Built-in domain plugins: two-factor auth (TOTP/recovery code), organizations/RBAC.
+- Framework-agnostic core for TypeScript apps running in Node-compatible server environments.
 
 ## Install
 
@@ -164,19 +164,19 @@ createIssue("Generic failure");
 ### OAuth2 (Arctic)
 
 - Method: `"oauth2"`
-- Uses provider clients with `validateAuthorizationCode(...)` (Arctic-compatible).
+- Uses provider exchange callbacks. Arctic clients can be wrapped with `arcticAuthorizationCodeExchange(...)`.
 - Supports profile completion when required fields are missing.
 
 ```ts
 import { Google } from "arctic";
-import { oauth2Plugin } from "@oglofus/auth";
+import { arcticAuthorizationCodeExchange, oauth2Plugin } from "@oglofus/auth";
 
 const google = new Google(process.env.GOOGLE_CLIENT_ID!, process.env.GOOGLE_CLIENT_SECRET!, process.env.GOOGLE_REDIRECT_URI!);
 
 oauth2Plugin<AppUser, "google", "given_name" | "family_name">({
   providers: {
     google: {
-      client: google,
+      exchangeAuthorizationCode: arcticAuthorizationCodeExchange(google),
       resolveProfile: async ({ tokens }) => {
         const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
           headers: { Authorization: `Bearer ${tokens.accessToken()}` },
@@ -211,6 +211,7 @@ const result = await auth.authenticate({
   authorizationCode: "code-from-callback",
   redirectUri: process.env.GOOGLE_REDIRECT_URI!,
   codeVerifier: "pkce-code-verifier",
+  idempotencyKey: "oauth-state",
 });
 ```
 
@@ -218,12 +219,15 @@ const result = await auth.authenticate({
 
 - Method: `"passkey"`
 - Register + authenticate supported.
+- The package consumes already-verified passkey results; it does not perform raw WebAuthn attestation/assertion verification.
+- Verify WebAuthn with `@simplewebauthn/server` or equivalent first, then pass the verified result into `auth.register(...)` / `auth.authenticate(...)`.
 - Config: `requiredProfileFields`, `passkeys` adapter.
 
 ### Two-Factor (Domain Plugin)
 
 - Method: `"two_factor"`
 - Adds post-primary verification (`TWO_FACTOR_REQUIRED`).
+- This release supports `totp` and `recovery_code`.
 - Uses `@oslojs/otp` internally for TOTP verification and enrollment URI generation.
 - Plugin API:
   - `beginTotpEnrollment(userId)`

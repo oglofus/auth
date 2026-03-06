@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { OglofusAuth, passwordPlugin, type PasswordCredentialAdapter, type UserBase } from "../src/index.js";
-import { createIdentityStore, createSessionStore, createUserStore } from "./helpers/in-memory.js";
+import {
+  createIdentityStore,
+  createRateLimiterStore,
+  createSessionStore,
+  createUserStore,
+} from "./helpers/in-memory.js";
 
 interface User extends UserBase {}
 
@@ -106,4 +111,47 @@ test("explicit discovery mode requires identity adapter", () => {
       validateConfigOnStart: true,
     });
   });
+});
+
+test("discover is rate limited when rateLimiter is configured", async () => {
+  const users = createUserStore<User>();
+  const sessions = createSessionStore();
+  const identity = createIdentityStore();
+  const rateLimiter = createRateLimiterStore();
+
+  const auth = new OglofusAuth({
+    accountDiscovery: { mode: "private" },
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      identity: identity.adapter,
+      rateLimiter: rateLimiter.adapter,
+    },
+    plugins: [
+      passwordPlugin<User, never>({
+        requiredProfileFields: [] as const,
+        credentials,
+      }),
+    ] as const,
+    validateConfigOnStart: true,
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const result = await auth.discover(
+      { intent: "login", email: "existing@example.com" },
+      { ip: "203.0.113.10" },
+    );
+    assert.equal(result.ok, true);
+  }
+
+  const blocked = await auth.discover(
+    { intent: "login", email: "existing@example.com" },
+    { ip: "203.0.113.10" },
+  );
+
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) {
+    assert.equal(blocked.error.code, "RATE_LIMITED");
+    assert.equal(blocked.error.meta?.retryAfterSeconds, 60);
+  }
 });

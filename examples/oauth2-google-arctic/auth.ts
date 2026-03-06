@@ -1,7 +1,9 @@
 import {
   OglofusAuth,
+  arcticAuthorizationCodeExchange,
   oauth2Plugin,
   type OAuth2AccountAdapter,
+  type IdempotencyAdapter,
   type PendingProfileAdapter,
   type PendingProfileRecord,
   type Session,
@@ -21,6 +23,7 @@ const usersByEmail = new Map<string, AppUser>();
 const sessionsById = new Map<string, Session>();
 const linkedAccounts = new Map<string, string>();
 const pendingProfiles = new Map<string, PendingProfileRecord<AppUser>>();
+const seenCallbacks = new Set<string>();
 
 const users: UserAdapter<AppUser> = {
   findById: async (id) => usersById.get(id) ?? null,
@@ -92,6 +95,17 @@ const pending: PendingProfileAdapter<AppUser> = {
   },
 };
 
+const idempotency: IdempotencyAdapter = {
+  checkAndSet: async (key) => {
+    if (seenCallbacks.has(key)) {
+      return false;
+    }
+
+    seenCallbacks.add(key);
+    return true;
+  },
+};
+
 const google = new Google(
   process.env.GOOGLE_CLIENT_ID!,
   process.env.GOOGLE_CLIENT_SECRET!,
@@ -103,12 +117,13 @@ export const auth = new OglofusAuth({
     users,
     sessions,
     pendingProfiles: pending,
+    idempotency,
   },
   plugins: [
     oauth2Plugin<AppUser, "google", "given_name" | "family_name">({
       providers: {
         google: {
-          client: google,
+          exchangeAuthorizationCode: arcticAuthorizationCodeExchange(google),
           resolveProfile: async ({ tokens }) => {
             const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
               headers: {
