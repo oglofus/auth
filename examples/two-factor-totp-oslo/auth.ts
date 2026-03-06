@@ -17,7 +17,7 @@ export interface AppUser extends UserBase {
 }
 
 type PendingChallenge = Awaited<ReturnType<TwoFactorChallengeAdapter["findById"]>> extends infer T
-  ? Exclude<T, null>
+  ? Exclude<T, null | undefined>
   : never;
 
 const usersById = new Map<string, AppUser>();
@@ -48,7 +48,7 @@ const users: UserAdapter<AppUser> = {
   update: async (id, patch) => {
     const current = usersById.get(id);
     if (!current) {
-      throw new Error(`Missing user ${id}`);
+      return null;
     }
     const next = { ...current, ...patch, updatedAt: new Date() };
     usersById.set(id, next);
@@ -62,15 +62,6 @@ const sessions: SessionAdapter = {
     sessionsById.set(session.id, session);
   },
   findById: async (id) => sessionsById.get(id) ?? null,
-  setActiveOrganization: async (sessionId, organizationId) => {
-    const current = sessionsById.get(sessionId);
-    if (!current) {
-      throw new Error(`Missing session ${sessionId}`);
-    }
-    const next = { ...current, activeOrganizationId: organizationId };
-    sessionsById.set(sessionId, next);
-    return next;
-  },
   revoke: async (id) => {
     const current = sessionsById.get(id);
     if (!current) {

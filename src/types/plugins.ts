@@ -138,6 +138,10 @@ export interface OrganizationsPluginApi<
     input: { token: string; userId: string },
     request?: AuthRequestContext,
   ): Promise<OperationResult<{ organizationId: string; membership: M }>>;
+  setActiveOrganization(
+    input: { sessionId: string; organizationId?: string },
+    request?: AuthRequestContext,
+  ): Promise<OperationResult<{ sessionId: string; activeOrganizationId: string | null }>>;
   setMemberRole(
     input: { organizationId: string; membershipId: string; role: Role },
     request?: AuthRequestContext,
@@ -246,11 +250,6 @@ export interface AuthPublicApi<U extends UserBase, P extends readonly AnyPlugin<
   method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiMap<P>[M];
   verifySecondFactor(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<AuthResult<U>>;
   completeProfile(input: CompleteProfileInput<U>, request?: AuthRequestContext): Promise<AuthResult<U>>;
-  setActiveOrganization(
-    sessionId: string,
-    organizationId: string,
-    request?: AuthRequestContext,
-  ): Promise<OperationResult<{ sessionId: string; activeOrganizationId: string }>>;
   validateSession(
     sessionId: string,
     request?: AuthRequestContext,

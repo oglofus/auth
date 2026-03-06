@@ -479,6 +479,12 @@ export interface OrganizationsPluginApi<
     input: { token: string; userId: string },
     request?: AuthRequestContext,
   ): Promise<OperationResult<{ organizationId: string; membership: M }>>;
+  setActiveOrganization(
+    input: { sessionId: string; organizationId?: string },
+    request?: AuthRequestContext,
+  ): Promise<
+    OperationResult<{ sessionId: string; activeOrganizationId: string | null }>
+  >;
   setMemberRole(
     input: { organizationId: string; membershipId: string; role: Role },
     request?: AuthRequestContext,
@@ -629,11 +635,13 @@ Startup-time invariants:
 ## 6. Storage adapters (DB-agnostic, domain-specific)
 
 ```ts
+export type MaybeFound<T> = T | null | undefined;
+
 export interface UserAdapter<U extends UserBase> {
-  findById(id: string): Promise<U | null>;
-  findByEmail(email: string): Promise<U | null>;
+  findById(id: string): Promise<MaybeFound<U>>;
+  findByEmail(email: string): Promise<MaybeFound<U>>;
   create(input: Omit<U, "id" | "createdAt" | "updatedAt">): Promise<U>;
-  update(id: string, patch: Partial<U>): Promise<U>;
+  update(id: string, patch: Partial<U>): Promise<MaybeFound<U>>;
 }
 
 export interface RateLimitResult {
@@ -671,7 +679,7 @@ export interface IdentitySnapshot {
 }
 
 export interface IdentityAdapter {
-  findByEmail(email: string): Promise<IdentitySnapshot | null>;
+  findByEmail(email: string): Promise<MaybeFound<IdentitySnapshot>>;
 }
 
 export interface PendingProfileRecord<
@@ -683,7 +691,7 @@ export interface PendingProfileRecord<
 
 export interface PendingProfileAdapter<U extends UserBase> {
   create(record: PendingProfileRecord<U>): Promise<void>;
-  findById(pendingProfileId: string): Promise<PendingProfileRecord<U> | null>;
+  findById(pendingProfileId: string): Promise<MaybeFound<PendingProfileRecord<U>>>;
   // Atomic compare-and-set: returns false if already consumed/expired/missing.
   consume(pendingProfileId: string): Promise<boolean>;
 }
@@ -695,9 +703,9 @@ export interface IdempotencyAdapter {
 
 export interface OrganizationAdapter<O extends OrganizationBase> {
   create(input: Omit<O, "id" | "createdAt" | "updatedAt">): Promise<O>;
-  findById(organizationId: string): Promise<O | null>;
-  findBySlug(slug: string): Promise<O | null>;
-  update(organizationId: string, patch: Partial<O>): Promise<O>;
+  findById(organizationId: string): Promise<MaybeFound<O>>;
+  findBySlug(slug: string): Promise<MaybeFound<O>>;
+  update(organizationId: string, patch: Partial<O>): Promise<MaybeFound<O>>;
 }
 
 export interface MembershipAdapter<
@@ -705,15 +713,18 @@ export interface MembershipAdapter<
   M extends MembershipBase<Role>,
 > {
   create(input: Omit<M, "id" | "createdAt" | "updatedAt">): Promise<M>;
-  findById(membershipId: string): Promise<M | null>;
+  findById(membershipId: string): Promise<MaybeFound<M>>;
   findByUserAndOrganization(
     userId: string,
     organizationId: string,
-  ): Promise<M | null>;
+  ): Promise<MaybeFound<M>>;
   listByUser(userId: string): Promise<M[]>;
   listByOrganization(organizationId: string): Promise<M[]>;
-  setRole(membershipId: string, role: Role): Promise<M>;
-  setStatus(membershipId: string, status: M["status"]): Promise<M>;
+  setRole(membershipId: string, role: Role): Promise<MaybeFound<M>>;
+  setStatus(
+    membershipId: string,
+    status: M["status"],
+  ): Promise<MaybeFound<M>>;
   delete(membershipId: string): Promise<void>;
 }
 
@@ -733,7 +744,7 @@ export interface OrganizationInviteAdapter<Role extends string = string> {
   create(invite: OrganizationInvite<Role>): Promise<void>;
   findActiveByTokenHash(
     tokenHash: string,
-  ): Promise<OrganizationInvite<Role> | null>;
+  ): Promise<MaybeFound<OrganizationInvite<Role>>>;
   // Atomic compare-and-set: returns false if invite already used/expired/revoked/missing.
   consume(inviteId: string): Promise<boolean>;
   revoke(inviteId: string): Promise<void>;
@@ -844,7 +855,7 @@ export interface CoreAdapters<U extends UserBase> {
 
 // Official plugin adapter contracts (custom plugins can define their own)
 export interface PasswordCredentialAdapter {
-  getPasswordHash(userId: string): Promise<string | null>;
+  getPasswordHash(userId: string): Promise<MaybeFound<string>>;
   setPasswordHash(userId: string, passwordHash: string): Promise<void>;
 }
 
@@ -865,7 +876,7 @@ export interface EmailOtpAdapter {
     codeHash: string;
     expiresAt: Date;
   }): Promise<OtpChallenge>;
-  findChallengeById(challengeId: string): Promise<OtpChallenge | null>;
+  findChallengeById(challengeId: string): Promise<MaybeFound<OtpChallenge>>;
   // Atomic compare-and-set: returns false if already consumed/expired/missing.
   consumeChallenge(challengeId: string): Promise<boolean>;
   // Must be atomic and return the updated attempt count.
@@ -893,7 +904,7 @@ export interface MagicLinkAdapter {
     tokenHash: string;
     expiresAt: Date;
   }): Promise<MagicLinkToken>;
-  findActiveTokenByHash(tokenHash: string): Promise<MagicLinkToken | null>;
+  findActiveTokenByHash(tokenHash: string): Promise<MaybeFound<MagicLinkToken>>;
   // Atomic compare-and-set: returns false if token already consumed/expired/missing.
   consumeToken(tokenId: string): Promise<boolean>;
 }
@@ -912,6 +923,7 @@ export interface OrganizationsPluginHandlers<
   LimitKey extends string,
 > {
   organizations: OrganizationAdapter<O>;
+  organizationSessions: OrganizationSessionAdapter;
   memberships: MembershipAdapter<Role, M>;
   invites: OrganizationInviteAdapter<Role>;
   inviteDelivery: OrganizationInviteDeliveryHandler<Role>;
@@ -921,7 +933,7 @@ export interface OrganizationsPluginHandlers<
 }
 
 export interface OAuth2AccountAdapter<P extends string> {
-  findUserId(provider: P, providerUserId: string): Promise<string | null>;
+  findUserId(provider: P, providerUserId: string): Promise<MaybeFound<string>>;
   linkAccount(input: {
     userId: string;
     provider: P;
@@ -943,7 +955,9 @@ export interface PasskeyCredential {
 }
 
 export interface PasskeyAdapter {
-  findByCredentialId(credentialId: string): Promise<PasskeyCredential | null>;
+  findByCredentialId(
+    credentialId: string,
+  ): Promise<MaybeFound<PasskeyCredential>>;
   listByUserId(userId: string): Promise<PasskeyCredential[]>;
   create(credential: PasskeyCredential): Promise<void>;
   updateCounter(credentialId: string, counter: number): Promise<void>;
@@ -961,7 +975,7 @@ export interface PendingTwoFactorChallenge {
 
 export interface TwoFactorChallengeAdapter {
   create(challenge: PendingTwoFactorChallenge): Promise<void>;
-  findById(id: string): Promise<PendingTwoFactorChallenge | null>;
+  findById(id: string): Promise<MaybeFound<PendingTwoFactorChallenge>>;
   // Atomic compare-and-set: returns false if challenge already consumed/expired/missing.
   consume(id: string): Promise<boolean>;
 }
@@ -975,7 +989,7 @@ export interface TotpSecret {
 }
 
 export interface TotpAdapter {
-  findActiveByUserId(userId: string): Promise<TotpSecret | null>;
+  findActiveByUserId(userId: string): Promise<MaybeFound<TotpSecret>>;
   upsertActive(userId: string, encryptedSecret: string): Promise<void>;
   disable(userId: string): Promise<void>;
 }
@@ -1005,13 +1019,16 @@ export interface Session {
 
 export interface SessionAdapter {
   create(session: Session): Promise<void>;
-  findById(id: string): Promise<Session | null>;
+  findById(id: string): Promise<MaybeFound<Session>>;
+  revoke(id: string): Promise<void>;
+  revokeAllForUser(userId: string): Promise<void>;
+}
+
+export interface OrganizationSessionAdapter {
   setActiveOrganization(
     sessionId: string,
     organizationId?: string,
-  ): Promise<Session>;
-  revoke(id: string): Promise<void>;
-  revokeAllForUser(userId: string): Promise<void>;
+  ): Promise<MaybeFound<Session>>;
 }
 ```
 
@@ -1022,7 +1039,7 @@ Why this shape:
 - Allows plugins to own their own persistence contracts without bloating core.
 - Enables optional anti-abuse and audit capabilities without forcing a specific infra.
 - Supports product-level routing flows (login/register redirects) without coupling UI into core.
-- Supports explicit tenant context switching through `sessions.setActiveOrganization(...)`.
+- Supports explicit tenant context switching through the organizations plugin API and `organizationSessions.setActiveOrganization(...)`.
 
 ### Communication in out-of-band plugins
 
@@ -1395,17 +1412,6 @@ export class OglofusAuth<
     throw new Error("not implemented");
   }
 
-  setActiveOrganization(
-    sessionId: string,
-    organizationId: string,
-    request?: AuthRequestContext,
-  ): Promise<
-    OperationResult<{ sessionId: string; activeOrganizationId: string }>
-  > {
-    // requires `organizations` plugin; validates membership and updates active tenant context on session
-    throw new Error("not implemented");
-  }
-
   validateSession(
     sessionId: string,
     request?: AuthRequestContext,
@@ -1454,7 +1460,7 @@ Keep wrappers thin so developer can swap providers later with minimal breakage.
 - Invite acceptance should require normalized invite email to match authenticated user email (unless explicitly configured otherwise).
 - Seat-limit checks and membership creation must be atomic.
 - Role/feature/limit checks must run server-side on every protected action (never trust client claims).
-- `setActiveOrganization` must verify membership is active and tenant is still accessible at the time of switch.
+- `organizations.setActiveOrganization` must verify membership is active and tenant is still accessible at the time of switch.
 - Two-factor challenges are short-lived and bound to a `pendingAuthId`.
 - `pendingAuthId` must be bound to the primary auth attempt and invalidated on timeout/use.
 - Pending profile-completion states must be short-lived and one-time consumable.
@@ -1563,9 +1569,6 @@ const auth = new OglofusAuth({
     sessions: {
       create: async (session) => {},
       findById: async (id) => null,
-      setActiveOrganization: async (sessionId, organizationId) => {
-        throw new Error("implement setActiveOrganization");
-      },
       revoke: async (id) => {},
       revokeAllForUser: async (userId) => {},
     },
@@ -1820,7 +1823,11 @@ await orgApi.setLimitOverride({
   value: 25,
 });
 
-await auth.setActiveOrganization("session_123", "org_123");
+const orgApi = auth.method("organizations");
+await orgApi.setActiveOrganization({
+  sessionId: "session_123",
+  organizationId: "org_123",
+});
 
 await auth.verifySecondFactor({
   method: "totp",
@@ -1964,7 +1971,11 @@ const decision = await privateAuth.discover({
 ### Product scenario 8: switch active organization after membership checks
 
 ```ts
-const switched = await auth.setActiveOrganization("session_123", "org_123");
+const orgApi = auth.method("organizations");
+const switched = await orgApi.setActiveOrganization({
+  sessionId: "session_123",
+  organizationId: "org_123",
+});
 if (!switched.ok) {
   // expected on forbidden tenant access: MEMBERSHIP_FORBIDDEN
 }
@@ -2288,7 +2299,7 @@ Issue found:
 
 Fix in spec:
 
-- `setActiveOrganization` and org-scoped permission checks must verify current membership status every time.
+- `organizations.setActiveOrganization` and org-scoped permission checks must verify current membership status every time.
 - Suspended/invited memberships must not authorize organization actions.
 
 ### W) Auth-method and domain-plugin method collision
@@ -2407,9 +2418,6 @@ const users: UserAdapter<User> = {
 const sessions: SessionAdapter = {
   create: async (session) => {},
   findById: async (id) => null,
-  setActiveOrganization: async (sessionId, organizationId) => {
-    throw new Error("not used in this example");
-  },
   revoke: async (id) => {},
   revokeAllForUser: async (userId) => {},
 };
@@ -2612,9 +2620,6 @@ const users: UserAdapter<User> = {
 const sessions: SessionAdapter = {
   create: async (session) => {},
   findById: async (id) => null,
-  setActiveOrganization: async (sessionId, organizationId) => {
-    throw new Error("not used in this example");
-  },
   revoke: async (id) => {},
   revokeAllForUser: async (userId) => {},
 };

@@ -87,9 +87,19 @@ const loggedIn = await auth.authenticate({
 - `method(pluginMethod)` for plugin-specific APIs
 - `verifySecondFactor(input, request?)`
 - `completeProfile(input, request?)`
-- `setActiveOrganization(sessionId, organizationId, request?)`
 - `validateSession(sessionId, request?)`
 - `signOut(sessionId, request?)`
+
+Organization session switching is exposed by the organizations plugin API:
+
+```ts
+const orgApi = auth.method("organizations");
+await orgApi.setActiveOrganization({
+  sessionId: "session_123",
+  organizationId: "org_123",
+});
+await orgApi.setActiveOrganization({ sessionId: "session_123" }); // clear
+```
 
 ## Result and Error Shape
 

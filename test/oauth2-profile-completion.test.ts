@@ -27,7 +27,7 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
   const linkedAccounts = new Map<string, string>();
   const accounts: OAuth2AccountAdapter<"google"> = {
     findUserId: async (provider, providerUserId) =>
-      linkedAccounts.get(`${provider}:${providerUserId}`) ?? null,
+      linkedAccounts.get(`${provider}:${providerUserId}`),
     linkAccount: async (input) => {
       linkedAccounts.set(`${input.provider}:${input.providerUserId}`, input.userId);
     },
@@ -100,4 +100,56 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
 
   assert.equal(step2.user.email, "nikos@example.com");
   assert.equal(step2.user.family_name, "Gram");
+});
+
+test("completeProfile returns USER_NOT_FOUND when user update returns nullish", async () => {
+  const existingUser: User = {
+    id: "user_123",
+    email: "nikos@example.com",
+    emailVerified: true,
+    given_name: "Nikos",
+    family_name: "Before",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const users = createUserStore<User>([existingUser]);
+  users.adapter.update = async () => undefined;
+
+  const sessions = createSessionStore();
+  const pending = createPendingProfileStore<User>();
+  await pending.adapter.create({
+    pendingProfileId: "pending_123",
+    sourceMethod: "oauth2",
+    email: existingUser.email,
+    missingFields: ["family_name"],
+    prefill: {
+      given_name: existingUser.given_name,
+      emailVerified: existingUser.emailVerified,
+    },
+    expiresAt: new Date(Date.now() + 60_000),
+    consumedAt: null,
+  });
+
+  const auth = new OglofusAuth({
+    adapters: {
+      users: users.adapter,
+      sessions: sessions.adapter,
+      pendingProfiles: pending.adapter,
+    },
+    plugins: [] as const,
+    validateConfigOnStart: true,
+  });
+
+  const result = await auth.completeProfile({
+    pendingProfileId: "pending_123",
+    profile: {
+      family_name: "Gram",
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "USER_NOT_FOUND");
+  }
 });

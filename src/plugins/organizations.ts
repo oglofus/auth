@@ -348,9 +348,22 @@ export const organizationsPlugin = <
 
           let membership: M;
           if (existing) {
-            membership = await config.handlers.memberships.setRole(existing.id, invite.role);
+            const updatedRole = await config.handlers.memberships.setRole(existing.id, invite.role);
+            if (!updatedRole) {
+              return errorOperation(new AuthError("MEMBERSHIP_NOT_FOUND", "Membership not found.", 404));
+            }
+            membership = updatedRole;
             if (membership.status !== "active") {
-              membership = await config.handlers.memberships.setStatus(membership.id, "active");
+              const updatedStatus = await config.handlers.memberships.setStatus(
+                membership.id,
+                "active",
+              );
+              if (!updatedStatus) {
+                return errorOperation(
+                  new AuthError("MEMBERSHIP_NOT_FOUND", "Membership not found.", 404),
+                );
+              }
+              membership = updatedStatus;
             }
           } else {
             membership = await config.handlers.memberships.create({
@@ -364,6 +377,39 @@ export const organizationsPlugin = <
           return successOperation({
             organizationId: invite.organizationId,
             membership,
+          });
+        },
+        setActiveOrganization: async (input, request) => {
+          const session = await ctx.adapters.sessions.findById(input.sessionId);
+          if (!session) {
+            return errorOperation(new AuthError("SESSION_NOT_FOUND", "Session not found.", 404));
+          }
+
+          if (input.organizationId) {
+            const memberships = await config.handlers.memberships.listByUser(session.userId);
+            const active = memberships.find(
+              (membership) =>
+                membership.organizationId === input.organizationId && membership.status === "active",
+            );
+
+            if (!active) {
+              return errorOperation(
+                new AuthError("MEMBERSHIP_FORBIDDEN", "No active membership for organization.", 403),
+              );
+            }
+          }
+
+          const updatedSession = await config.handlers.organizationSessions.setActiveOrganization(
+            input.sessionId,
+            input.organizationId,
+          );
+          if (!updatedSession) {
+            return errorOperation(new AuthError("SESSION_NOT_FOUND", "Session not found.", 404));
+          }
+
+          return successOperation({
+            sessionId: input.sessionId,
+            activeOrganizationId: updatedSession.activeOrganizationId ?? null,
           });
         },
         setMemberRole: async (input, request) => {
@@ -420,6 +466,9 @@ export const organizationsPlugin = <
           }
 
           const membership = await config.handlers.memberships.setRole(input.membershipId, input.role);
+          if (!membership) {
+            return errorOperation(new AuthError("MEMBERSHIP_NOT_FOUND", "Membership not found.", 404));
+          }
           return successOperation({ membership });
         },
         listMemberships: async (input) => {

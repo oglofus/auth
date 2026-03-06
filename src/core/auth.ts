@@ -53,6 +53,7 @@ const toAuthError = (error: unknown): AuthError => {
 type OrganizationPluginWithConfig = {
   __organizationConfig?: {
     handlers?: {
+      organizationSessions?: unknown;
       roles?: Record<string, { inherits?: readonly string[]; system?: { owner?: boolean; default?: boolean } }>;
       defaultRole?: string;
     };
@@ -359,7 +360,11 @@ export class OglofusAuth<
     if (email) {
       const existing = await this.config.adapters.users.findByEmail(email);
       if (existing) {
-        user = await this.config.adapters.users.update(existing.id, merged as Partial<U>);
+        const updated = await this.config.adapters.users.update(existing.id, merged as Partial<U>);
+        if (!updated) {
+          return errorResult(new AuthError("USER_NOT_FOUND", "User not found.", 404));
+        }
+        user = updated;
       } else {
         user = await this.config.adapters.users.create(
           merged as Omit<U, "id" | "createdAt" | "updatedAt">,
@@ -373,49 +378,6 @@ export class OglofusAuth<
 
     const sessionId = await this.createSession(user.id);
     return successResult(user, sessionId);
-  }
-
-  public async setActiveOrganization(
-    sessionId: string,
-    organizationId: string,
-    request?: AuthRequestContext,
-  ): Promise<OperationResult<{ sessionId: string; activeOrganizationId: string }>> {
-    const session = await this.config.adapters.sessions.findById(sessionId);
-    if (!session) {
-      return errorOperation(new AuthError("SESSION_NOT_FOUND", "Session not found.", 404));
-    }
-
-    const organizationsApi = this.apiMap.get("organizations") as
-      | {
-          listMemberships: (input: { userId: string }, request?: AuthRequestContext) => Promise<OperationResult<{ memberships: Array<{ organizationId: string; status: string }> }>>;
-        }
-      | undefined;
-
-    if (!organizationsApi) {
-      return errorOperation(new AuthError("METHOD_DISABLED", "organizations plugin is not enabled.", 400));
-    }
-
-    const memberships = await organizationsApi.listMemberships({ userId: session.userId }, request);
-    if (!memberships.ok) {
-      return memberships;
-    }
-
-    const active = memberships.data.memberships.find(
-      (membership) => membership.organizationId === organizationId && membership.status === "active",
-    );
-
-    if (!active) {
-      return errorOperation(
-        new AuthError("MEMBERSHIP_FORBIDDEN", "No active membership for organization.", 403),
-      );
-    }
-
-    await this.config.adapters.sessions.setActiveOrganization(sessionId, organizationId);
-
-    return successOperation({
-      sessionId,
-      activeOrganizationId: organizationId,
-    });
   }
 
   public async validateSession(
@@ -600,11 +562,19 @@ export class OglofusAuth<
       );
     }
 
-    if (this.config.validateConfigOnStart) {
-      const orgPlugin = this.config.plugins.find(
-        (plugin) => plugin.method === "organizations",
-      ) as (P[number] & OrganizationPluginWithConfig) | undefined;
+    const orgPlugin = this.config.plugins.find(
+      (plugin) => plugin.method === "organizations",
+    ) as (P[number] & OrganizationPluginWithConfig) | undefined;
 
+    if (orgPlugin && !orgPlugin.__organizationConfig?.handlers?.organizationSessions) {
+      throw new AuthError(
+        "PLUGIN_MISCONFIGURED",
+        "organizations plugin requires handlers.organizationSessions.",
+        500,
+      );
+    }
+
+    if (this.config.validateConfigOnStart) {
       const roleConfig = orgPlugin?.__organizationConfig?.handlers?.roles;
       const defaultRole = orgPlugin?.__organizationConfig?.handlers?.defaultRole;
 

@@ -2,6 +2,7 @@ import type {
   AuditAdapter,
   AuditRecord,
   IdentityAdapter,
+  OrganizationSessionAdapter,
   PendingProfileAdapter,
   PendingProfileRecord,
   SessionAdapter,
@@ -42,7 +43,7 @@ export const createUserStore = <U extends UserBase>(seed: U[] = []) => {
     update: async (id, patch) => {
       const current = byId.get(id);
       if (!current) {
-        throw new Error(`User ${id} not found`);
+        return null;
       }
 
       const next = {
@@ -72,19 +73,6 @@ export const createSessionStore = () => {
       byId.set(session.id, session);
     },
     findById: async (id) => byId.get(id) ?? null,
-    setActiveOrganization: async (sessionId, organizationId) => {
-      const session = byId.get(sessionId);
-      if (!session) {
-        throw new Error(`Session ${sessionId} not found`);
-      }
-
-      const next = {
-        ...session,
-        activeOrganizationId: organizationId,
-      };
-      byId.set(sessionId, next);
-      return next;
-    },
     revoke: async (id) => {
       const session = byId.get(id);
       if (!session) {
@@ -107,9 +95,26 @@ export const createSessionStore = () => {
     },
   };
 
+  const organizationAdapter: OrganizationSessionAdapter = {
+    setActiveOrganization: async (sessionId, organizationId) => {
+      const session = byId.get(sessionId);
+      if (!session) {
+        return null;
+      }
+
+      const next = {
+        ...session,
+        activeOrganizationId: organizationId,
+      };
+      byId.set(sessionId, next);
+      return next;
+    },
+  };
+
   return {
     byId,
     adapter,
+    organizationAdapter,
   };
 };
 

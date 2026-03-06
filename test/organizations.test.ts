@@ -35,6 +35,7 @@ interface Membership extends MembershipBase<OrgRole> {}
 const createOrgEnv = () => {
   const users = createUserStore<User>();
   const sessions = createSessionStore();
+  const organizationSessions = sessions.organizationAdapter;
   const passwordHashes = new Map<string, string>();
 
   const credentials: PasswordCredentialAdapter = {
@@ -83,7 +84,7 @@ const createOrgEnv = () => {
     update: async (organizationId, patch) => {
       const current = organizationsById.get(organizationId);
       if (!current) {
-        throw new Error("Organization not found");
+        return null;
       }
       const next = {
         ...current,
@@ -119,7 +120,7 @@ const createOrgEnv = () => {
     setRole: async (membershipId, role) => {
       const current = membershipsById.get(membershipId);
       if (!current) {
-        throw new Error("Membership not found");
+        return null;
       }
       const next = {
         ...current,
@@ -132,7 +133,7 @@ const createOrgEnv = () => {
     setStatus: async (membershipId, status) => {
       const current = membershipsById.get(membershipId);
       if (!current) {
-        throw new Error("Membership not found");
+        return null;
       }
       const next = {
         ...current,
@@ -233,6 +234,7 @@ const createOrgEnv = () => {
         organizationRequiredFields: ["billing_email"] as const,
         handlers: {
           organizations,
+          organizationSessions,
           memberships,
           invites,
           inviteDelivery,
@@ -261,7 +263,10 @@ const createOrgEnv = () => {
   return {
     auth,
     deliveredLinks,
+    organizationSessions,
     membershipsById,
+    memberships,
+    sessionsById: sessions.byId,
   };
 };
 
@@ -351,8 +356,24 @@ test("organizations plugin supports create/invite/accept/check and session tenan
     assert.equal(canManage.data.allowed, false);
   }
 
-  const switched = await auth.setActiveOrganization(member.sessionId, created.data.organization.id);
+  const switched = await orgApi.setActiveOrganization({
+    sessionId: member.sessionId,
+    organizationId: created.data.organization.id,
+  });
   assert.equal(switched.ok, true);
+  if (!switched.ok) {
+    return;
+  }
+
+  assert.equal(switched.data.activeOrganizationId, created.data.organization.id);
+
+  const cleared = await orgApi.setActiveOrganization({
+    sessionId: member.sessionId,
+  });
+  assert.equal(cleared.ok, true);
+  if (cleared.ok) {
+    assert.equal(cleared.data.activeOrganizationId, null);
+  }
 });
 
 test("organizations last owner guard prevents demoting final owner", async () => {
@@ -395,5 +416,243 @@ test("organizations last owner guard prevents demoting final owner", async () =>
   assert.equal(demote.ok, false);
   if (!demote.ok) {
     assert.equal(demote.error.code, "LAST_OWNER_GUARD");
+  }
+});
+
+test("organizations setActiveOrganization returns SESSION_NOT_FOUND when the session is missing", async () => {
+  const { auth } = createOrgEnv();
+
+  const result = await auth.method("organizations").setActiveOrganization({
+    sessionId: "missing-session",
+    organizationId: "org_123",
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "SESSION_NOT_FOUND");
+  }
+});
+
+test("organizations setActiveOrganization returns SESSION_NOT_FOUND when organization session update loses the session", async () => {
+  const { auth, deliveredLinks, organizationSessions } = createOrgEnv();
+
+  const owner = await auth.register({
+    method: "password",
+    email: "owner@example.com",
+    password: "secret",
+    given_name: "Owner",
+  });
+  assert.equal(owner.ok, true);
+  if (!owner.ok) {
+    return;
+  }
+
+  const member = await auth.register({
+    method: "password",
+    email: "member@example.com",
+    password: "secret",
+    given_name: "Member",
+  });
+  assert.equal(member.ok, true);
+  if (!member.ok) {
+    return;
+  }
+
+  const orgApi = auth.method("organizations");
+  const created = await orgApi.createOrganization(
+    {
+      name: "Acme",
+      slug: "acme-race-session",
+      profile: { billing_email: "billing@acme.com" },
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) {
+    return;
+  }
+
+  const invited = await orgApi.inviteMember(
+    {
+      organizationId: created.data.organization.id,
+      email: "member@example.com",
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(invited.ok, true);
+  assert.equal(deliveredLinks.length, 1);
+
+  const inviteToken = new URL(deliveredLinks[0]).searchParams.get("token");
+  assert.equal(typeof inviteToken, "string");
+
+  const accepted = await orgApi.acceptInvite({
+    token: inviteToken!,
+    userId: member.user.id,
+  });
+  assert.equal(accepted.ok, true);
+  if (!accepted.ok) {
+    return;
+  }
+
+  organizationSessions.setActiveOrganization = async () => undefined;
+
+  const switched = await orgApi.setActiveOrganization({
+    sessionId: member.sessionId,
+    organizationId: created.data.organization.id,
+  });
+
+  assert.equal(switched.ok, false);
+  if (!switched.ok) {
+    assert.equal(switched.error.code, "SESSION_NOT_FOUND");
+  }
+});
+
+test("organizations acceptInvite returns MEMBERSHIP_NOT_FOUND when activating an existing membership fails", async () => {
+  const { auth, deliveredLinks, memberships } = createOrgEnv();
+
+  const owner = await auth.register({
+    method: "password",
+    email: "owner@example.com",
+    password: "secret",
+    given_name: "Owner",
+  });
+  assert.equal(owner.ok, true);
+  if (!owner.ok) {
+    return;
+  }
+
+  const member = await auth.register({
+    method: "password",
+    email: "member@example.com",
+    password: "secret",
+    given_name: "Member",
+  });
+  assert.equal(member.ok, true);
+  if (!member.ok) {
+    return;
+  }
+
+  const orgApi = auth.method("organizations");
+  const created = await orgApi.createOrganization(
+    {
+      name: "Acme",
+      slug: "acme-null-status",
+      profile: { billing_email: "billing@acme.com" },
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) {
+    return;
+  }
+
+  const existingMembership = await memberships.create({
+    organizationId: created.data.organization.id,
+    userId: member.user.id,
+    role: "member",
+    status: "suspended",
+  });
+
+  const invited = await orgApi.inviteMember(
+    {
+      organizationId: created.data.organization.id,
+      email: "member@example.com",
+      role: "member",
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(invited.ok, true);
+  assert.equal(deliveredLinks.length, 1);
+
+  memberships.setStatus = async (membershipId, status) => {
+    assert.equal(membershipId, existingMembership.id);
+    assert.equal(status, "active");
+    return undefined;
+  };
+
+  const accepted = await orgApi.acceptInvite({
+    token: new URL(deliveredLinks[0]).searchParams.get("token")!,
+    userId: member.user.id,
+  });
+
+  assert.equal(accepted.ok, false);
+  if (!accepted.ok) {
+    assert.equal(accepted.error.code, "MEMBERSHIP_NOT_FOUND");
+  }
+});
+
+test("organizations setMemberRole returns MEMBERSHIP_NOT_FOUND when membership mutation returns nullish", async () => {
+  const { auth, deliveredLinks, memberships } = createOrgEnv();
+
+  const owner = await auth.register({
+    method: "password",
+    email: "owner@example.com",
+    password: "secret",
+    given_name: "Owner",
+  });
+  assert.equal(owner.ok, true);
+  if (!owner.ok) {
+    return;
+  }
+
+  const member = await auth.register({
+    method: "password",
+    email: "member@example.com",
+    password: "secret",
+    given_name: "Member",
+  });
+  assert.equal(member.ok, true);
+  if (!member.ok) {
+    return;
+  }
+
+  const orgApi = auth.method("organizations");
+  const created = await orgApi.createOrganization(
+    {
+      name: "Acme",
+      slug: "acme-null-role",
+      profile: { billing_email: "billing@acme.com" },
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) {
+    return;
+  }
+
+  const invited = await orgApi.inviteMember(
+    {
+      organizationId: created.data.organization.id,
+      email: "member@example.com",
+      role: "member",
+    },
+    { userId: owner.user.id },
+  );
+  assert.equal(invited.ok, true);
+  assert.equal(deliveredLinks.length, 1);
+
+  const accepted = await orgApi.acceptInvite({
+    token: new URL(deliveredLinks[0]).searchParams.get("token")!,
+    userId: member.user.id,
+  });
+  assert.equal(accepted.ok, true);
+  if (!accepted.ok) {
+    return;
+  }
+
+  memberships.setRole = async () => undefined;
+
+  const updated = await orgApi.setMemberRole(
+    {
+      organizationId: created.data.organization.id,
+      membershipId: accepted.data.membership.id,
+      role: "member",
+    },
+    { userId: owner.user.id },
+  );
+
+  assert.equal(updated.ok, false);
+  if (!updated.ok) {
+    assert.equal(updated.error.code, "MEMBERSHIP_NOT_FOUND");
   }
 });

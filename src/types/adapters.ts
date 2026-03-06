@@ -9,11 +9,13 @@ import type {
   UserBase,
 } from "./model.js";
 
+export type MaybeFound<T> = T | null | undefined;
+
 export interface UserAdapter<U extends UserBase> {
-  findById(id: string): Promise<U | null>;
-  findByEmail(email: string): Promise<U | null>;
+  findById(id: string): Promise<MaybeFound<U>>;
+  findByEmail(email: string): Promise<MaybeFound<U>>;
   create(input: Omit<U, "id" | "createdAt" | "updatedAt">): Promise<U>;
-  update(id: string, patch: Partial<U>): Promise<U>;
+  update(id: string, patch: Partial<U>): Promise<MaybeFound<U>>;
 }
 
 export interface RateLimitResult {
@@ -47,7 +49,7 @@ export interface IdentitySnapshot {
 }
 
 export interface IdentityAdapter {
-  findByEmail(email: string): Promise<IdentitySnapshot | null>;
+  findByEmail(email: string): Promise<MaybeFound<IdentitySnapshot>>;
 }
 
 export interface PendingProfileRecord<U extends UserBase> extends ProfileCompletionState<U> {
@@ -57,7 +59,7 @@ export interface PendingProfileRecord<U extends UserBase> extends ProfileComplet
 
 export interface PendingProfileAdapter<U extends UserBase> {
   create(record: PendingProfileRecord<U>): Promise<void>;
-  findById(pendingProfileId: string): Promise<PendingProfileRecord<U> | null>;
+  findById(pendingProfileId: string): Promise<MaybeFound<PendingProfileRecord<U>>>;
   consume(pendingProfileId: string): Promise<boolean>;
 }
 
@@ -67,19 +69,19 @@ export interface IdempotencyAdapter {
 
 export interface OrganizationAdapter<O extends OrganizationBase> {
   create(input: Omit<O, "id" | "createdAt" | "updatedAt">): Promise<O>;
-  findById(organizationId: string): Promise<O | null>;
-  findBySlug(slug: string): Promise<O | null>;
-  update(organizationId: string, patch: Partial<O>): Promise<O>;
+  findById(organizationId: string): Promise<MaybeFound<O>>;
+  findBySlug(slug: string): Promise<MaybeFound<O>>;
+  update(organizationId: string, patch: Partial<O>): Promise<MaybeFound<O>>;
 }
 
 export interface MembershipAdapter<Role extends string, M extends MembershipBase<Role>> {
   create(input: Omit<M, "id" | "createdAt" | "updatedAt">): Promise<M>;
-  findById(membershipId: string): Promise<M | null>;
-  findByUserAndOrganization(userId: string, organizationId: string): Promise<M | null>;
+  findById(membershipId: string): Promise<MaybeFound<M>>;
+  findByUserAndOrganization(userId: string, organizationId: string): Promise<MaybeFound<M>>;
   listByUser(userId: string): Promise<M[]>;
   listByOrganization(organizationId: string): Promise<M[]>;
-  setRole(membershipId: string, role: Role): Promise<M>;
-  setStatus(membershipId: string, status: M["status"]): Promise<M>;
+  setRole(membershipId: string, role: Role): Promise<MaybeFound<M>>;
+  setStatus(membershipId: string, status: M["status"]): Promise<MaybeFound<M>>;
   delete(membershipId: string): Promise<void>;
 }
 
@@ -97,7 +99,7 @@ export interface OrganizationInvite<Role extends string = string> {
 
 export interface OrganizationInviteAdapter<Role extends string = string> {
   create(invite: OrganizationInvite<Role>): Promise<void>;
-  findActiveByTokenHash(tokenHash: string): Promise<OrganizationInvite<Role> | null>;
+  findActiveByTokenHash(tokenHash: string): Promise<MaybeFound<OrganizationInvite<Role>>>;
   consume(inviteId: string): Promise<boolean>;
   revoke(inviteId: string): Promise<void>;
 }
@@ -184,7 +186,7 @@ export interface OutboxAdapter {
 }
 
 export interface PasswordCredentialAdapter {
-  getPasswordHash(userId: string): Promise<string | null>;
+  getPasswordHash(userId: string): Promise<MaybeFound<string>>;
   setPasswordHash(userId: string, passwordHash: string): Promise<void>;
 }
 
@@ -205,7 +207,7 @@ export interface EmailOtpAdapter {
     codeHash: string;
     expiresAt: Date;
   }): Promise<OtpChallenge>;
-  findChallengeById(challengeId: string): Promise<OtpChallenge | null>;
+  findChallengeById(challengeId: string): Promise<MaybeFound<OtpChallenge>>;
   consumeChallenge(challengeId: string): Promise<boolean>;
   incrementAttempts(challengeId: string): Promise<{ attempts: number }>;
 }
@@ -231,7 +233,7 @@ export interface MagicLinkAdapter {
     tokenHash: string;
     expiresAt: Date;
   }): Promise<MagicLinkToken>;
-  findActiveTokenByHash(tokenHash: string): Promise<MagicLinkToken | null>;
+  findActiveTokenByHash(tokenHash: string): Promise<MaybeFound<MagicLinkToken>>;
   consumeToken(tokenId: string): Promise<boolean>;
 }
 
@@ -241,7 +243,7 @@ export interface MagicLinkPluginHandlers {
 }
 
 export interface OAuth2AccountAdapter<P extends string> {
-  findUserId(provider: P, providerUserId: string): Promise<string | null>;
+  findUserId(provider: P, providerUserId: string): Promise<MaybeFound<string>>;
   linkAccount(input: {
     userId: string;
     provider: P;
@@ -263,7 +265,7 @@ export interface PasskeyCredential {
 }
 
 export interface PasskeyAdapter {
-  findByCredentialId(credentialId: string): Promise<PasskeyCredential | null>;
+  findByCredentialId(credentialId: string): Promise<MaybeFound<PasskeyCredential>>;
   listByUserId(userId: string): Promise<PasskeyCredential[]>;
   create(credential: PasskeyCredential): Promise<void>;
   updateCounter(credentialId: string, counter: number): Promise<void>;
@@ -281,7 +283,7 @@ export interface PendingTwoFactorChallenge {
 
 export interface TwoFactorChallengeAdapter {
   create(challenge: PendingTwoFactorChallenge): Promise<void>;
-  findById(id: string): Promise<PendingTwoFactorChallenge | null>;
+  findById(id: string): Promise<MaybeFound<PendingTwoFactorChallenge>>;
   consume(id: string): Promise<boolean>;
 }
 
@@ -294,7 +296,7 @@ export interface TotpSecret {
 }
 
 export interface TotpAdapter {
-  findActiveByUserId(userId: string): Promise<TotpSecret | null>;
+  findActiveByUserId(userId: string): Promise<MaybeFound<TotpSecret>>;
   upsertActive(userId: string, encryptedSecret: string): Promise<void>;
   disable(userId: string): Promise<void>;
 }
@@ -314,10 +316,16 @@ export interface RecoveryCodeAdapter {
 
 export interface SessionAdapter {
   create(session: Session): Promise<void>;
-  findById(id: string): Promise<Session | null>;
-  setActiveOrganization(sessionId: string, organizationId?: string): Promise<Session>;
+  findById(id: string): Promise<MaybeFound<Session>>;
   revoke(id: string): Promise<void>;
   revokeAllForUser(userId: string): Promise<void>;
+}
+
+export interface OrganizationSessionAdapter {
+  setActiveOrganization(
+    sessionId: string,
+    organizationId?: string,
+  ): Promise<MaybeFound<Session>>;
 }
 
 export interface OrganizationsPluginHandlers<
@@ -329,6 +337,7 @@ export interface OrganizationsPluginHandlers<
   LimitKey extends string,
 > {
   organizations: OrganizationAdapter<O>;
+  organizationSessions: OrganizationSessionAdapter;
   memberships: MembershipAdapter<Role, M>;
   invites: OrganizationInviteAdapter<Role>;
   inviteDelivery: OrganizationInviteDeliveryHandler<Role>;

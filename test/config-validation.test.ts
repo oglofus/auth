@@ -110,6 +110,9 @@ test("organizations roles are validated on startup", () => {
                 throw new Error("no");
               },
             },
+            organizationSessions: {
+              setActiveOrganization: async () => null,
+            },
             memberships: {
               create: async (input) => ({
                 ...input,
