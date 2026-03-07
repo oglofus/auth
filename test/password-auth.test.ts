@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import { OglofusAuth, passwordPlugin, type PasswordCredentialAdapter, type UserBase } from "../src/index.js";
 import { createRateLimiterStore, createSessionStore, createUserStore } from "./helpers/in-memory.js";

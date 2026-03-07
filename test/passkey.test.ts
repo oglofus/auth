@@ -1,12 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
-import {
-  OglofusAuth,
-  passkeyPlugin,
-  type PasskeyAdapter,
-  type UserBase,
-} from "../src/index.js";
+import { OglofusAuth, passkeyPlugin, type PasskeyAdapter, type UserBase } from "../src/index.js";
 import { createSessionStore, createUserStore } from "./helpers/in-memory.js";
 
 interface User extends UserBase {
@@ -16,13 +11,23 @@ interface User extends UserBase {
 const createPasskeyEnv = () => {
   const users = createUserStore<User>();
   const sessions = createSessionStore();
-  const credentials = new Map<string, { id: string; userId: string; credentialId: string; publicKey: string; counter: number; createdAt: Date; transports?: string[] }>();
+  const credentials = new Map<
+    string,
+    {
+      id: string;
+      userId: string;
+      credentialId: string;
+      publicKey: string;
+      counter: number;
+      createdAt: Date;
+      transports?: string[];
+    }
+  >();
 
   const passkeys: PasskeyAdapter = {
     findByCredentialId: async (credentialId) =>
       [...credentials.values()].find((credential) => credential.credentialId === credentialId) ?? null,
-    listByUserId: async (userId) =>
-      [...credentials.values()].filter((credential) => credential.userId === userId),
+    listByUserId: async (userId) => [...credentials.values()].filter((credential) => credential.userId === userId),
     create: async (credential) => {
       credentials.set(credential.id, credential);
     },
@@ -59,7 +64,7 @@ const createPasskeyEnv = () => {
     validateConfigOnStart: true,
   });
 
-  return { auth };
+  return { auth, users, credentials };
 };
 
 test("passkey register and authenticate", async () => {
@@ -157,5 +162,90 @@ test("passkey register rejects duplicate credentials", async () => {
   assert.equal(duplicate.ok, false);
   if (!duplicate.ok) {
     assert.equal(duplicate.error.code, "CONFLICT");
+  }
+});
+
+test("passkey authenticate requires credentialId and rejects unknown credentials", async () => {
+  const { auth } = createPasskeyEnv();
+
+  const missingCredential = await auth.authenticate({
+    method: "passkey",
+    authentication: {
+      credentialId: "",
+      nextCounter: 1,
+    },
+  });
+
+  assert.equal(missingCredential.ok, false);
+  if (!missingCredential.ok) {
+    assert.equal(missingCredential.error.code, "PASSKEY_INVALID_ASSERTION");
+  }
+
+  const unknownCredential = await auth.authenticate({
+    method: "passkey",
+    authentication: {
+      credentialId: "cred-missing",
+      nextCounter: 1,
+    },
+  });
+
+  assert.equal(unknownCredential.ok, false);
+  if (!unknownCredential.ok) {
+    assert.equal(unknownCredential.error.code, "PASSKEY_INVALID_ASSERTION");
+  }
+});
+
+test("passkey register requires credentialId and publicKey", async () => {
+  const { auth } = createPasskeyEnv();
+
+  const invalid = await auth.register({
+    method: "passkey",
+    email: "passkey@example.com",
+    given_name: "Pass",
+    registration: {
+      credentialId: "cred-1",
+      publicKey: "",
+      counter: 0,
+    },
+  });
+
+  assert.equal(invalid.ok, false);
+  if (!invalid.ok) {
+    assert.equal(invalid.error.code, "PASSKEY_INVALID_ATTESTATION");
+  }
+});
+
+test("passkey authenticate returns USER_NOT_FOUND when credential owner no longer exists", async () => {
+  const { auth, users } = createPasskeyEnv();
+
+  const register = await auth.register({
+    method: "passkey",
+    email: "passkey@example.com",
+    given_name: "Pass",
+    registration: {
+      credentialId: "cred-1",
+      publicKey: "pub",
+      counter: 0,
+    },
+  });
+  assert.equal(register.ok, true);
+  if (!register.ok) {
+    return;
+  }
+
+  users.byId.delete(register.user.id);
+  users.byEmail.delete(register.user.email);
+
+  const authResult = await auth.authenticate({
+    method: "passkey",
+    authentication: {
+      credentialId: "cred-1",
+      nextCounter: 1,
+    },
+  });
+
+  assert.equal(authResult.ok, false);
+  if (!authResult.ok) {
+    assert.equal(authResult.error.code, "USER_NOT_FOUND");
   }
 });

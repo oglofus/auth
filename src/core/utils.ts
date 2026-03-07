@@ -6,8 +6,7 @@ export const normalizeEmailDefault = (value: string): string => value.trim().toL
 
 export const now = (): Date => new Date();
 
-export const addSeconds = (date: Date, seconds: number): Date =>
-  new Date(date.getTime() + seconds * 1_000);
+export const addSeconds = (date: Date, seconds: number): Date => new Date(date.getTime() + seconds * 1_000);
 
 export const createId = (): string => randomUUID();
 
@@ -62,7 +61,6 @@ export const cloneWithout = <T extends Record<string, unknown>, K extends readon
 export const ensureRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-export const ensureString = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0;
+export const ensureString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
 export const isExpired = (at: Date, current: Date): boolean => at.getTime() <= current.getTime();

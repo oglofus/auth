@@ -1,12 +1,12 @@
 import { ArcticFetchError, OAuth2RequestError, type OAuth2Tokens } from "arctic";
+import { addSeconds, createId } from "../core/utils.js";
+import { ensureFields } from "../core/validators.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type { OAuth2AccountAdapter } from "../types/adapters.js";
 import type { OAuth2AuthenticateInput, UserBase } from "../types/model.js";
 import type { AuthMethodPlugin } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import { addSeconds, createId } from "../core/utils.js";
-import { ensureFields } from "../core/validators.js";
 
 export type OAuth2ExchangeResult<U extends UserBase, P extends string> = {
   provider: P;
@@ -30,9 +30,7 @@ export type OAuth2AuthorizationCodeExchangeInput = {
   redirectUri: string;
 };
 
-export type OAuth2AuthorizationCodeExchange = (
-  input: OAuth2AuthorizationCodeExchangeInput,
-) => Promise<OAuth2Tokens>;
+export type OAuth2AuthorizationCodeExchange = (input: OAuth2AuthorizationCodeExchangeInput) => Promise<OAuth2Tokens>;
 
 export type OAuth2ResolvedProfile<U extends UserBase, P extends string> = {
   provider?: P;
@@ -52,11 +50,7 @@ export type OAuth2ProviderConfig<U extends UserBase, P extends string> = {
   pkceRequired?: boolean;
 };
 
-export type OAuth2PluginConfig<
-  U extends UserBase,
-  P extends string,
-  K extends keyof U = never,
-> = {
+export type OAuth2PluginConfig<U extends UserBase, P extends string, K extends keyof U = never> = {
   providers: { [Provider in P]: OAuth2ProviderConfig<U, Provider> };
   accounts: OAuth2AccountAdapter<P>;
   requiredProfileFields?: readonly K[];
@@ -98,18 +92,9 @@ const getRefreshToken = (tokens: OAuth2Tokens): string | undefined => {
   }
 };
 
-export const oauth2Plugin = <
-  U extends UserBase,
-  P extends string,
-  K extends keyof U = never,
->(
+export const oauth2Plugin = <U extends UserBase, P extends string, K extends keyof U = never>(
   config: OAuth2PluginConfig<U, P, K>,
-): AuthMethodPlugin<
-  "oauth2",
-  OAuth2AuthenticateInput<P>,
-  OAuth2AuthenticateInput<P>,
-  U
-> => {
+): AuthMethodPlugin<"oauth2", OAuth2AuthenticateInput<P>, OAuth2AuthenticateInput<P>, U> => {
   const ttl = config.pendingProfileTtlSeconds ?? 10 * 60;
   const requiredProfileFields = (config.requiredProfileFields ?? []) as readonly K[];
 
@@ -125,7 +110,11 @@ export const oauth2Plugin = <
     },
     completePendingProfile: async (_ctx, { record, user }) => {
       const continuation = record.continuation as OAuth2PendingContinuation<P> | undefined;
-      if (!continuation || typeof continuation.provider !== "string" || typeof continuation.providerUserId !== "string") {
+      if (
+        !continuation ||
+        typeof continuation.provider !== "string" ||
+        typeof continuation.providerUserId !== "string"
+      ) {
         return errorOperation(
           new AuthError(
             "PLUGIN_MISCONFIGURED",
@@ -202,17 +191,12 @@ export const oauth2Plugin = <
         }
         if (error instanceof ArcticFetchError) {
           return errorOperation(
-            new AuthError(
-              "OAUTH2_EXCHANGE_FAILED",
-              "OAuth2 provider is unreachable right now.",
-              502,
-              [createIssue("Provider request failed", ["provider"])],
-            ),
+            new AuthError("OAUTH2_EXCHANGE_FAILED", "OAuth2 provider is unreachable right now.", 502, [
+              createIssue("Provider request failed", ["provider"]),
+            ]),
           );
         }
-        return errorOperation(
-          new AuthError("OAUTH2_EXCHANGE_FAILED", "OAuth2 code exchange failed.", 502),
-        );
+        return errorOperation(new AuthError("OAUTH2_EXCHANGE_FAILED", "OAuth2 code exchange failed.", 502));
       }
 
       let exchanged: OAuth2ResolvedProfile<U, P>;
@@ -223,9 +207,7 @@ export const oauth2Plugin = <
           authenticateInput: input,
         });
       } catch {
-        return errorOperation(
-          new AuthError("OAUTH2_EXCHANGE_FAILED", "Failed to resolve OAuth2 profile.", 502),
-        );
+        return errorOperation(new AuthError("OAUTH2_EXCHANGE_FAILED", "Failed to resolve OAuth2 profile.", 502));
       }
 
       if (!exchanged.providerUserId || exchanged.providerUserId.trim() === "") {
@@ -236,10 +218,7 @@ export const oauth2Plugin = <
         );
       }
 
-      const linkedUserId = await config.accounts.findUserId(
-        input.provider,
-        exchanged.providerUserId,
-      );
+      const linkedUserId = await config.accounts.findUserId(input.provider, exchanged.providerUserId);
       if (linkedUserId) {
         const linkedUser = await ctx.adapters.users.findById(linkedUserId);
         if (!linkedUser) {
@@ -330,9 +309,7 @@ export const oauth2Plugin = <
         );
       }
 
-      const user = await ctx.adapters.users.create(
-        profileRecord as Omit<U, "id" | "createdAt" | "updatedAt">,
-      );
+      const user = await ctx.adapters.users.create(profileRecord as Omit<U, "id" | "createdAt" | "updatedAt">);
 
       await config.accounts.linkAccount({
         userId: user.id,

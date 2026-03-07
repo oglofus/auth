@@ -1,16 +1,11 @@
+import { addSeconds, cloneWithout, createId, createToken, deterministicTokenHash } from "../core/utils.js";
+import { ensureFields } from "../core/validators.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type { MagicLinkPluginHandlers } from "../types/adapters.js";
-import type {
-  MagicLinkAuthenticateInput,
-  MagicLinkRegisterInput,
-  UserBase,
-} from "../types/model.js";
+import type { MagicLinkAuthenticateInput, MagicLinkRegisterInput, UserBase } from "../types/model.js";
 import type { AuthMethodPlugin, MagicLinkPluginApi } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import { addSeconds, createId, createToken, deterministicTokenHash } from "../core/utils.js";
-import { cloneWithout } from "../core/utils.js";
-import { ensureFields } from "../core/validators.js";
 
 export type MagicLinkPluginConfig<U extends UserBase, K extends keyof U> = {
   requiredProfileFields: readonly K[];
@@ -33,25 +28,14 @@ const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
 
 export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
   config: MagicLinkPluginConfig<U, K>,
-): AuthMethodPlugin<
-  "magic_link",
-  MagicLinkRegisterInput<U, K>,
-  MagicLinkAuthenticateInput,
-  U,
-  MagicLinkPluginApi
-> => {
+): AuthMethodPlugin<"magic_link", MagicLinkRegisterInput<U, K>, MagicLinkAuthenticateInput, U, MagicLinkPluginApi> => {
   const ttl = config.tokenTtlSeconds ?? 15 * 60;
 
   const verifyToken = async (
     token: string,
     now: Date,
-  ): Promise<
-    | { ok: true; userId?: string; email: string; tokenId: string }
-    | { ok: false; error: AuthError }
-  > => {
-    const candidate = await config.links.findActiveTokenByHash(
-      deterministicTokenHash(token, "magic_link"),
-    );
+  ): Promise<{ ok: true; userId?: string; email: string; tokenId: string } | { ok: false; error: AuthError }> => {
+    const candidate = await config.links.findActiveTokenByHash(deterministicTokenHash(token, "magic_link"));
 
     if (!candidate) {
       return {
@@ -104,9 +88,7 @@ export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
         if (ctx.adapters.rateLimiter) {
           const policy = ctx.security?.rateLimits?.magicLinkRequest ?? MAGIC_LINK_REQUEST_POLICY;
           const limited = await ctx.adapters.rateLimiter.consume(
-            request?.ip
-              ? `magicLinkRequest:ip:${request.ip}:identity:${email}`
-              : `magicLinkRequest:identity:${email}`,
+            request?.ip ? `magicLinkRequest:ip:${request.ip}:identity:${email}` : `magicLinkRequest:identity:${email}`,
             policy.limit,
             policy.windowSeconds,
           );
@@ -179,10 +161,7 @@ export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
         return errorOperation(requiredError);
       }
 
-      const payload = cloneWithout(input as unknown as Record<string, unknown>, [
-        "method",
-        "token",
-      ] as const);
+      const payload = cloneWithout(input as unknown as Record<string, unknown>, ["method", "token"] as const);
       payload.email = verified.email;
       payload.emailVerified = true;
 

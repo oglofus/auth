@@ -16,9 +16,8 @@ export interface AppUser extends UserBase {
   given_name: string;
 }
 
-type PendingChallenge = Awaited<ReturnType<TwoFactorChallengeAdapter["findById"]>> extends infer T
-  ? Exclude<T, null | undefined>
-  : never;
+type PendingChallenge =
+  Awaited<ReturnType<TwoFactorChallengeAdapter["findById"]>> extends infer T ? Exclude<T, null | undefined> : never;
 
 const usersById = new Map<string, AppUser>();
 const usersByEmail = new Map<string, AppUser>();

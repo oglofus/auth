@@ -7,4 +7,11 @@ Files:
 - `login-step2-route.ts`: verifies TOTP using `auth.verifySecondFactor`.
 - `totp-enrollment-routes.ts`: starts and confirms TOTP enrollment.
 
-The plugin uses `@oslojs/otp` internally for TOTP verification and key URI generation.
+Framework:
+
+- Next.js route handlers
+
+Notes:
+
+- The plugin uses `@oslojs/otp` internally for TOTP verification and key URI generation.
+- Recovery codes and TOTP secrets are in-memory in this example and should be replaced with persistent storage.

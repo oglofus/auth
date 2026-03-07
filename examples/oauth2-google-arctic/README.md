@@ -6,6 +6,10 @@ Files:
 - `start-route.ts`: starts OAuth flow and stores state + PKCE verifier in cookies.
 - `callback-route.ts`: validates callback and calls `auth.authenticate` with the callback `state` as `idempotencyKey`.
 
+Framework:
+
+- Next.js route handlers
+
 Required environment variables:
 
 - `GOOGLE_CLIENT_ID`

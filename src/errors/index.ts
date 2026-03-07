@@ -1,6 +1,5 @@
-import type { UserBase } from "../types/model.js";
-import type { ProfileCompletionState, TwoFactorRequiredMeta } from "../types/model.js";
 import type { Issue } from "../issues/index.js";
+import type { ProfileCompletionState, TwoFactorRequiredMeta, UserBase } from "../types/model.js";
 
 export type AuthErrorCode =
   | "INVALID_INPUT"
@@ -36,6 +35,11 @@ export type AuthErrorCode =
   | "PASSKEY_INVALID_ASSERTION"
   | "PASSKEY_INVALID_ATTESTATION"
   | "PASSKEY_CHALLENGE_EXPIRED"
+  | "CUSTOMER_NOT_FOUND"
+  | "SUBSCRIPTION_NOT_FOUND"
+  | "SUBSCRIPTION_ALREADY_EXISTS"
+  | "TRIAL_NOT_AVAILABLE"
+  | "STRIPE_WEBHOOK_INVALID"
   | "PROFILE_COMPLETION_REQUIRED"
   | "PROFILE_COMPLETION_EXPIRED"
   | "TWO_FACTOR_REQUIRED"

@@ -8,17 +8,9 @@ export interface UserBase {
 
 export type RequireKeys<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
-export type LocalProfileFields<U extends UserBase, K extends keyof U> = Pick<
-  RequireKeys<U, K>,
-  K
->;
+export type LocalProfileFields<U extends UserBase, K extends keyof U> = Pick<RequireKeys<U, K>, K>;
 
-export type PrimaryAuthMethod =
-  | "password"
-  | "email_otp"
-  | "magic_link"
-  | "oauth2"
-  | "passkey";
+export type PrimaryAuthMethod = "password" | "email_otp" | "magic_link" | "oauth2" | "passkey";
 
 export type AuthMethodName = PrimaryAuthMethod | (string & {});
 
@@ -174,10 +166,7 @@ export interface MembershipBase<Role extends string = string> {
   updatedAt: Date;
 }
 
-export type OrganizationCustomFields<
-  O extends OrganizationBase,
-  K extends keyof O,
-> = Pick<RequireKeys<O, K>, K>;
+export type OrganizationCustomFields<O extends OrganizationBase, K extends keyof O> = Pick<RequireKeys<O, K>, K>;
 
 export type OrganizationRoleDefinition<
   Role extends string,
@@ -202,13 +191,86 @@ export type OrganizationRoleCatalog<
   LimitKey extends string,
 > = Record<Role, OrganizationRoleDefinition<Role, Permission, Feature, LimitKey>>;
 
-export type OrganizationEntitlementSnapshot<
-  Feature extends string,
-  LimitKey extends string,
-> = {
+export type OrganizationEntitlementSnapshot<Feature extends string, LimitKey extends string> = {
   features: Partial<Record<Feature, boolean>>;
   limits: Partial<Record<LimitKey, number>>;
 };
+
+export type StripeSubject = { kind: "user"; userId: string } | { kind: "organization"; organizationId: string };
+
+export type StripeReference = `user:${string}` | `organization:${string}`;
+
+export type StripeBillingCycle = "monthly" | "annual";
+
+export type StripeSubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "unpaid"
+  | "paused"
+  | "canceled"
+  | "incomplete"
+  | "incomplete_expired";
+
+export type StripeEntitlementSnapshot<Feature extends string, LimitKey extends string> = {
+  planKey?: string;
+  status?: StripeSubscriptionStatus;
+  features: Partial<Record<Feature, boolean>>;
+  limits: Partial<Record<LimitKey, number>>;
+};
+
+export type StripePlan<Feature extends string, LimitKey extends string> = {
+  key: string;
+  displayName: string;
+  scope: StripeSubject["kind"];
+  prices: {
+    monthly?: { priceId: string };
+    annual?: { priceId: string };
+  };
+  trial?: {
+    days: number;
+    oncePerSubject?: boolean;
+  };
+  seats?: {
+    enabled: boolean;
+    minimum?: number;
+    maximum?: number;
+    limitKey?: LimitKey;
+  };
+  features?: Partial<Record<Feature, boolean>>;
+  limits?: Partial<Record<LimitKey, number>>;
+  metadata?: Record<string, string>;
+};
+
+export interface StripeCustomerRecord {
+  id: string;
+  subject: StripeSubject;
+  stripeCustomerId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StripeSubscriptionSnapshot<Feature extends string = string, LimitKey extends string = string> {
+  id: string;
+  subject: StripeSubject;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string;
+  stripePriceId: string;
+  planKey: string;
+  status: StripeSubscriptionStatus;
+  billingCycle: StripeBillingCycle;
+  seats?: number | null;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodStart?: Date | null;
+  currentPeriodEnd?: Date | null;
+  trialStartedAt?: Date | null;
+  trialEndsAt?: Date | null;
+  canceledAt?: Date | null;
+  features: Partial<Record<Feature, boolean>>;
+  limits: Partial<Record<LimitKey, number>>;
+  metadata?: Record<string, string>;
+  updatedAt: Date;
+}
 
 export interface AuthRequestContext {
   requestId?: string;

@@ -1,15 +1,11 @@
+import { cloneWithout, createId } from "../core/utils.js";
+import { ensureFields } from "../core/validators.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type { PasskeyAdapter } from "../types/adapters.js";
-import type {
-  PasskeyAuthenticateInput,
-  PasskeyRegisterInput,
-  UserBase,
-} from "../types/model.js";
+import type { PasskeyAuthenticateInput, PasskeyRegisterInput, UserBase } from "../types/model.js";
 import type { AuthMethodPlugin } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import { cloneWithout, createId } from "../core/utils.js";
-import { ensureFields } from "../core/validators.js";
 
 export type PasskeyPluginConfig<U extends UserBase, K extends keyof U> = {
   requiredProfileFields: readonly K[];
@@ -18,12 +14,7 @@ export type PasskeyPluginConfig<U extends UserBase, K extends keyof U> = {
 
 export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
   config: PasskeyPluginConfig<U, K>,
-): AuthMethodPlugin<
-  "passkey",
-  PasskeyRegisterInput<U, K>,
-  PasskeyAuthenticateInput,
-  U
-> => ({
+): AuthMethodPlugin<"passkey", PasskeyRegisterInput<U, K>, PasskeyAuthenticateInput, U> => ({
   kind: "auth_method",
   method: "passkey",
   version: "2.0.0",
@@ -46,19 +37,11 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
 
     const credential = await config.passkeys.findByCredentialId(credentialId);
     if (!credential) {
-      return errorOperation(
-        new AuthError("PASSKEY_INVALID_ASSERTION", "Unknown passkey credential.", 400),
-      );
+      return errorOperation(new AuthError("PASSKEY_INVALID_ASSERTION", "Unknown passkey credential.", 400));
     }
 
     if (input.authentication.nextCounter <= credential.counter) {
-      return errorOperation(
-        new AuthError(
-          "PASSKEY_INVALID_ASSERTION",
-          "Passkey counter regression detected.",
-          400,
-        ),
-      );
+      return errorOperation(new AuthError("PASSKEY_INVALID_ASSERTION", "Passkey counter regression detected.", 400));
     }
 
     await config.passkeys.updateCounter(credential.credentialId, input.authentication.nextCounter);
@@ -100,10 +83,7 @@ export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
 
     let user = await ctx.adapters.users.findByEmail(input.email);
     if (!user) {
-      const payload = cloneWithout(input as unknown as Record<string, unknown>, [
-        "method",
-        "registration",
-      ] as const);
+      const payload = cloneWithout(input as unknown as Record<string, unknown>, ["method", "registration"] as const);
       payload.emailVerified = true;
 
       user = await ctx.adapters.users.create(payload as Omit<U, "id" | "createdAt" | "updatedAt">);

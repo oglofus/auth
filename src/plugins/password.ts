@@ -1,15 +1,11 @@
+import { cloneWithout, secretHash, secretVerify } from "../core/utils.js";
+import { ensureFields } from "../core/validators.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type { PasswordCredentialAdapter } from "../types/adapters.js";
-import type {
-  PasswordAuthenticateInput,
-  PasswordRegisterInput,
-  UserBase,
-} from "../types/model.js";
+import type { PasswordAuthenticateInput, PasswordRegisterInput, UserBase } from "../types/model.js";
 import type { AuthMethodPlugin } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import { cloneWithout, secretHash, secretVerify } from "../core/utils.js";
-import { ensureFields } from "../core/validators.js";
 
 export type PasswordPluginConfig<U extends UserBase, K extends keyof U> = {
   requiredProfileFields: readonly K[];
@@ -20,12 +16,7 @@ export type PasswordPluginConfig<U extends UserBase, K extends keyof U> = {
 
 export const passwordPlugin = <U extends UserBase, K extends keyof U>(
   config: PasswordPluginConfig<U, K>,
-): AuthMethodPlugin<
-  "password",
-  PasswordRegisterInput<U, K>,
-  PasswordAuthenticateInput,
-  U
-> => ({
+): AuthMethodPlugin<"password", PasswordRegisterInput<U, K>, PasswordAuthenticateInput, U> => ({
   kind: "auth_method",
   method: "password",
   version: "2.0.0",
@@ -54,10 +45,7 @@ export const passwordPlugin = <U extends UserBase, K extends keyof U>(
       return errorOperation(requiredError);
     }
 
-    const payload = cloneWithout(input as unknown as Record<string, unknown>, [
-      "method",
-      "password",
-    ] as const);
+    const payload = cloneWithout(input as unknown as Record<string, unknown>, ["method", "password"] as const);
 
     if (payload.emailVerified === undefined) {
       payload.emailVerified = false;

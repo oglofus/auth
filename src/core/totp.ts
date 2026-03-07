@@ -12,12 +12,7 @@ const withNow = <T>(at: Date, run: () => T): T => {
   }
 };
 
-export const generateTotp = (
-  secret: string,
-  at: Date,
-  stepSeconds = 30,
-  digits = 6,
-): string => {
+export const generateTotp = (secret: string, at: Date, stepSeconds = 30, digits = 6): string => {
   return withNow(at, () => generateTOTP(toKey(secret), stepSeconds, digits));
 };
 
@@ -30,7 +25,5 @@ export const verifyTotp = (
   digits = 6,
 ): boolean => {
   const gracePeriodSeconds = Math.max(0, window) * stepSeconds;
-  return withNow(at, () =>
-    verifyTOTPWithGracePeriod(toKey(secret), stepSeconds, digits, code, gracePeriodSeconds),
-  );
+  return withNow(at, () => verifyTOTPWithGracePeriod(toKey(secret), stepSeconds, digits, code, gracePeriodSeconds));
 };

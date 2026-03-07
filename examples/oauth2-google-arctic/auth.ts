@@ -2,8 +2,8 @@ import {
   OglofusAuth,
   arcticAuthorizationCodeExchange,
   oauth2Plugin,
-  type OAuth2AccountAdapter,
   type IdempotencyAdapter,
+  type OAuth2AccountAdapter,
   type PendingProfileAdapter,
   type PendingProfileRecord,
   type Session,
@@ -73,8 +73,7 @@ const sessions: SessionAdapter = {
 };
 
 const accounts: OAuth2AccountAdapter<"google"> = {
-  findUserId: async (provider, providerUserId) =>
-    linkedAccounts.get(`${provider}:${providerUserId}`) ?? null,
+  findUserId: async (provider, providerUserId) => linkedAccounts.get(`${provider}:${providerUserId}`) ?? null,
   linkAccount: async (input) => {
     linkedAccounts.set(`${input.provider}:${input.providerUserId}`, input.userId);
   },

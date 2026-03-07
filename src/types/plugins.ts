@@ -3,13 +3,18 @@ import type {
   AccountDiscoveryMode,
   AuthRequestContext,
   CompleteProfileInput,
-  DiscoverAccountInput,
   DiscoverAccountDecision,
+  DiscoverAccountInput,
   MembershipBase,
   OrganizationBase,
   OrganizationEntitlementSnapshot,
   ProfileCompletionState,
   SecondFactorMethod,
+  StripeBillingCycle,
+  StripeEntitlementSnapshot,
+  StripePlan,
+  StripeSubject,
+  StripeSubscriptionSnapshot,
   TwoFactorVerifyInput,
   UserBase,
 } from "./model.js";
@@ -20,13 +25,10 @@ export interface AuthPluginContext<U extends UserBase> {
   now(): Date;
   security?: AuthSecurityConfig;
   request?: AuthRequestContext;
+  getPluginApi?<T = unknown>(method: string): T | null;
 }
 
-export interface BasePlugin<
-  Method extends string,
-  U extends UserBase,
-  ExposedApi extends object = {},
-> {
+export interface BasePlugin<Method extends string, U extends UserBase, ExposedApi extends object = {}> {
   kind: "auth_method" | "domain";
   method: Method;
   version: string;
@@ -57,14 +59,8 @@ export interface AuthMethodPlugin<
     authenticate: readonly Extract<keyof AuthenticateInput, string>[];
     register?: readonly Extract<keyof RegisterInput, string>[];
   };
-  register?: (
-    ctx: AuthPluginContext<U>,
-    input: RegisterInput,
-  ) => Promise<OperationResult<{ user: U }>>;
-  authenticate: (
-    ctx: AuthPluginContext<U>,
-    input: AuthenticateInput,
-  ) => Promise<OperationResult<{ user: U }>>;
+  register?: (ctx: AuthPluginContext<U>, input: RegisterInput) => Promise<OperationResult<{ user: U }>>;
+  authenticate: (ctx: AuthPluginContext<U>, input: AuthenticateInput) => Promise<OperationResult<{ user: U }>>;
   completePendingProfile?: (
     ctx: AuthPluginContext<U>,
     input: CompletePendingProfileInput<U>,
@@ -90,17 +86,9 @@ export interface TwoFactorPluginApi<U extends UserBase> {
     input: { user: U; primaryMethod: string },
     request?: AuthRequestContext,
   ): Promise<OperationResult<TwoFactorEvaluateResult>>;
-  verify(
-    input: TwoFactorVerifyInput,
-    request?: AuthRequestContext,
-  ): Promise<OperationResult<{ user: U }>>;
-  beginTotpEnrollment(
-    userId: string,
-  ): Promise<OperationResult<{ enrollmentId: string; otpauthUri: string }>>;
-  confirmTotpEnrollment(input: {
-    enrollmentId: string;
-    code: string;
-  }): Promise<OperationResult<{ enabled: true }>>;
+  verify(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<OperationResult<{ user: U }>>;
+  beginTotpEnrollment(userId: string): Promise<OperationResult<{ enrollmentId: string; otpauthUri: string }>>;
+  confirmTotpEnrollment(input: { enrollmentId: string; code: string }): Promise<OperationResult<{ enabled: true }>>;
   regenerateRecoveryCodes(userId: string): Promise<OperationResult<{ codes: string[] }>>;
 }
 
@@ -187,6 +175,54 @@ export interface OrganizationsPluginApi<
   ): Promise<OperationResult<{ allowed: boolean; remaining?: number }>>;
 }
 
+export interface StripePluginApi<Feature extends string, LimitKey extends string> {
+  createCheckoutSession(input: {
+    subject: StripeSubject;
+    planKey: string;
+    billingCycle: StripeBillingCycle;
+    successUrl: string;
+    cancelUrl: string;
+    seats?: number;
+    locale?: string;
+    metadata?: Record<string, string>;
+  }): Promise<OperationResult<{ url: string; checkoutSessionId: string }>>;
+  createBillingPortalSession(input: {
+    subject: StripeSubject;
+    returnUrl: string;
+    locale?: string;
+  }): Promise<OperationResult<{ url: string }>>;
+  getSubscription(input: {
+    subject: StripeSubject;
+  }): Promise<OperationResult<{ subscription: StripeSubscriptionSnapshot<Feature, LimitKey> | null }>>;
+  listSubscriptions(input: {
+    subject: StripeSubject;
+  }): Promise<OperationResult<{ subscriptions: StripeSubscriptionSnapshot<Feature, LimitKey>[] }>>;
+  cancelSubscription(input: {
+    subject: StripeSubject;
+    subscriptionId?: string;
+    atPeriodEnd?: boolean;
+  }): Promise<OperationResult<{ subscription: StripeSubscriptionSnapshot<Feature, LimitKey> }>>;
+  resumeSubscription(input: {
+    subject: StripeSubject;
+    subscriptionId?: string;
+  }): Promise<OperationResult<{ subscription: StripeSubscriptionSnapshot<Feature, LimitKey> }>>;
+  changePlan(input: {
+    subject: StripeSubject;
+    planKey: string;
+    billingCycle: StripeBillingCycle;
+    subscriptionId?: string;
+    seats?: number;
+    scheduleAtPeriodEnd?: boolean;
+  }): Promise<OperationResult<{ subscription: StripeSubscriptionSnapshot<Feature, LimitKey> }>>;
+  getEntitlements(input: {
+    subject: StripeSubject;
+  }): Promise<OperationResult<StripeEntitlementSnapshot<Feature, LimitKey>>>;
+  handleWebhook(input: {
+    rawBody: string | Uint8Array;
+    stripeSignature: string;
+  }): Promise<OperationResult<{ processed: true; eventId: string }>>;
+}
+
 export interface OrganizationsPluginConfig<
   O extends OrganizationBase,
   Role extends string,
@@ -199,6 +235,10 @@ export interface OrganizationsPluginConfig<
   organizationRequiredFields?: readonly Extract<RequiredOrgFields, string>[];
   handlers: OrganizationsPluginHandlers<O, Role, M, Permission, Feature, LimitKey>;
 }
+
+export type StripePlansResolver<Feature extends string, LimitKey extends string> =
+  | readonly StripePlan<Feature, LimitKey>[]
+  | (() => Promise<readonly StripePlan<Feature, LimitKey>[]>);
 
 export type AuthSecurityRateLimitScope =
   | "discover"
@@ -269,14 +309,8 @@ export interface AuthPublicApi<U extends UserBase, P extends readonly AnyPlugin<
     input: DiscoverAccountInput,
     request?: AuthRequestContext,
   ): Promise<OperationResult<DiscoverAccountDecision>>;
-  authenticate(
-    input: AuthenticateInputFromPlugins<P>,
-    request?: AuthRequestContext,
-  ): Promise<AuthResult<U>>;
-  register(
-    input: RegisterInputFromPlugins<P>,
-    request?: AuthRequestContext,
-  ): Promise<AuthResult<U>>;
+  authenticate(input: AuthenticateInputFromPlugins<P>, request?: AuthRequestContext): Promise<AuthResult<U>>;
+  register(input: RegisterInputFromPlugins<P>, request?: AuthRequestContext): Promise<AuthResult<U>>;
   method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiMap<P>[M];
   verifySecondFactor(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<AuthResult<U>>;
   completeProfile(input: CompleteProfileInput<U>, request?: AuthRequestContext): Promise<AuthResult<U>>;

@@ -7,4 +7,11 @@ Files:
 - `login-route.ts`: login endpoint.
 - `session-route.ts`: validate/sign-out endpoints.
 
-Use this as a template and replace in-memory adapters with database-backed adapters.
+Framework:
+
+- Next.js route handlers
+
+Notes:
+
+- The example returns `sessionId` in JSON for clarity; in production you would usually set an HTTP-only cookie instead.
+- Replace the in-memory user/session/password stores with database-backed adapters.

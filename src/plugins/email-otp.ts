@@ -1,22 +1,11 @@
+import { addSeconds, cloneWithout, createId, createNumericCode, secretHash, secretVerify } from "../core/utils.js";
+import { ensureFields } from "../core/validators.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type { EmailOtpPluginHandlers } from "../types/adapters.js";
-import type {
-  EmailOtpAuthenticateInput,
-  EmailOtpRegisterInput,
-  UserBase,
-} from "../types/model.js";
+import type { EmailOtpAuthenticateInput, EmailOtpRegisterInput, UserBase } from "../types/model.js";
 import type { AuthMethodPlugin, EmailOtpPluginApi } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
-import {
-  addSeconds,
-  createId,
-  createNumericCode,
-  secretHash,
-  secretVerify,
-} from "../core/utils.js";
-import { cloneWithout } from "../core/utils.js";
-import { ensureFields } from "../core/validators.js";
 
 export type EmailOtpPluginConfig<U extends UserBase, K extends keyof U> = {
   requiredProfileFields: readonly K[];
@@ -44,13 +33,7 @@ const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
 
 export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
   config: EmailOtpPluginConfig<U, K>,
-): AuthMethodPlugin<
-  "email_otp",
-  EmailOtpRegisterInput<U, K>,
-  EmailOtpAuthenticateInput,
-  U,
-  EmailOtpPluginApi
-> => {
+): AuthMethodPlugin<"email_otp", EmailOtpRegisterInput<U, K>, EmailOtpAuthenticateInput, U, EmailOtpPluginApi> => {
   const ttl = config.challengeTtlSeconds ?? 10 * 60;
   const maxAttempts = config.maxAttempts ?? 5;
   const codeLength = config.codeLength ?? 6;
@@ -62,12 +45,13 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
     request?: { ip?: string },
     security?: { rateLimits?: { otpVerify?: { limit: number; windowSeconds: number } } },
     rateLimiter?: {
-      consume(key: string, limit: number, windowSeconds: number): Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+      consume(
+        key: string,
+        limit: number,
+        windowSeconds: number,
+      ): Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
     },
-  ): Promise<
-    | { ok: true; userId: string; email: string }
-    | { ok: false; error: AuthError }
-  > => {
+  ): Promise<{ ok: true; userId: string; email: string } | { ok: false; error: AuthError }> => {
     const challenge = await config.otp.findChallengeById(challengeId);
     if (rateLimiter) {
       const policy = security?.rateLimits?.otpVerify ?? OTP_VERIFY_POLICY;
@@ -98,9 +82,7 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
     if (challenge.expiresAt.getTime() <= now.getTime()) {
       return {
         ok: false,
-        error: new AuthError("OTP_EXPIRED", "OTP has expired.", 400, [
-          createIssue("OTP expired", ["code"]),
-        ]),
+        error: new AuthError("OTP_EXPIRED", "OTP has expired.", 400, [createIssue("OTP expired", ["code"])]),
       };
     }
 
@@ -123,9 +105,7 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
 
       return {
         ok: false,
-        error: new AuthError("OTP_INVALID", "Invalid OTP code.", 400, [
-          createIssue("Invalid code", ["code"]),
-        ]),
+        error: new AuthError("OTP_INVALID", "Invalid OTP code.", 400, [createIssue("Invalid code", ["code"])]),
       };
     }
 
@@ -163,9 +143,7 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
         if (ctx.adapters.rateLimiter) {
           const policy = ctx.security?.rateLimits?.emailOtpRequest ?? EMAIL_OTP_REQUEST_POLICY;
           const limited = await ctx.adapters.rateLimiter.consume(
-            request?.ip
-              ? `emailOtpRequest:ip:${request.ip}:identity:${email}`
-              : `emailOtpRequest:identity:${email}`,
+            request?.ip ? `emailOtpRequest:ip:${request.ip}:identity:${email}` : `emailOtpRequest:identity:${email}`,
             policy.limit,
             policy.windowSeconds,
           );
@@ -194,9 +172,7 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
         });
 
         if (!delivery.accepted && !ctx.adapters.outbox) {
-          return errorOperation(
-            new AuthError("DELIVERY_FAILED", "Unable to deliver OTP.", 502),
-          );
+          return errorOperation(new AuthError("DELIVERY_FAILED", "Unable to deliver OTP.", 502));
         }
 
         if (!delivery.accepted && ctx.adapters.outbox) {
@@ -248,11 +224,10 @@ export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
         return errorOperation(requiredError);
       }
 
-      const payload = cloneWithout(input as unknown as Record<string, unknown>, [
-        "method",
-        "challengeId",
-        "code",
-      ] as const);
+      const payload = cloneWithout(
+        input as unknown as Record<string, unknown>,
+        ["method", "challengeId", "code"] as const,
+      );
       payload.email = verified.email;
       payload.emailVerified = true;
 

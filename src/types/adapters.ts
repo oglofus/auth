@@ -6,6 +6,9 @@ import type {
   SecondFactorMethod,
   Session,
   SignInMethodHint,
+  StripeCustomerRecord,
+  StripeSubject,
+  StripeSubscriptionSnapshot,
   UserBase,
 } from "./model.js";
 
@@ -104,22 +107,37 @@ export interface OrganizationInviteAdapter<Role extends string = string> {
   revoke(inviteId: string): Promise<void>;
 }
 
-export interface OrganizationEntitlementsAdapter<
-  Feature extends string,
-  LimitKey extends string,
-> {
+export interface OrganizationEntitlementsAdapter<Feature extends string, LimitKey extends string> {
   getFeatureOverrides(organizationId: string): Promise<Partial<Record<Feature, boolean>>>;
   getLimitOverrides(organizationId: string): Promise<Partial<Record<LimitKey, number>>>;
-  setFeatureOverride(
-    organizationId: string,
-    feature: Feature,
-    enabled: boolean,
-  ): Promise<void>;
-  setLimitOverride(
-    organizationId: string,
-    key: LimitKey,
-    value: number,
-  ): Promise<void>;
+  setFeatureOverride(organizationId: string, feature: Feature, enabled: boolean): Promise<void>;
+  setLimitOverride(organizationId: string, key: LimitKey, value: number): Promise<void>;
+}
+
+export interface StripeCustomerAdapter {
+  findBySubject(subject: StripeSubject): Promise<MaybeFound<StripeCustomerRecord>>;
+  findByStripeCustomerId(stripeCustomerId: string): Promise<MaybeFound<StripeCustomerRecord>>;
+  create(record: StripeCustomerRecord): Promise<void>;
+  updateByStripeCustomerId(stripeCustomerId: string, patch: Partial<StripeCustomerRecord>): Promise<void>;
+}
+
+export interface StripeSubscriptionAdapter<Feature extends string, LimitKey extends string> {
+  findActiveBySubject(subject: StripeSubject): Promise<MaybeFound<StripeSubscriptionSnapshot<Feature, LimitKey>>>;
+  findByStripeSubscriptionId(
+    stripeSubscriptionId: string,
+  ): Promise<MaybeFound<StripeSubscriptionSnapshot<Feature, LimitKey>>>;
+  listBySubject(subject: StripeSubject): Promise<StripeSubscriptionSnapshot<Feature, LimitKey>[]>;
+  upsert(snapshot: StripeSubscriptionSnapshot<Feature, LimitKey>): Promise<void>;
+}
+
+export interface StripeWebhookEventAdapter {
+  hasProcessed(eventId: string): Promise<boolean>;
+  markProcessed(input: { eventId: string; processedAt: Date; type: string }): Promise<void>;
+}
+
+export interface StripeTrialUsageAdapter {
+  hasUsedTrial(input: { subject: StripeSubject; planKey: string }): Promise<boolean>;
+  markUsedTrial(input: { subject: StripeSubject; planKey: string; usedAt: Date }): Promise<void>;
 }
 
 export interface OrganizationInviteDeliveryPayload<Role extends string = string> {
@@ -201,12 +219,7 @@ export interface OtpChallenge {
 }
 
 export interface EmailOtpAdapter {
-  createChallenge(input: {
-    userId: string;
-    email: string;
-    codeHash: string;
-    expiresAt: Date;
-  }): Promise<OtpChallenge>;
+  createChallenge(input: { userId: string; email: string; codeHash: string; expiresAt: Date }): Promise<OtpChallenge>;
   findChallengeById(challengeId: string): Promise<MaybeFound<OtpChallenge>>;
   consumeChallenge(challengeId: string): Promise<boolean>;
   incrementAttempts(challengeId: string): Promise<{ attempts: number }>;
@@ -227,12 +240,7 @@ export interface MagicLinkToken {
 }
 
 export interface MagicLinkAdapter {
-  createToken(input: {
-    userId?: string;
-    email: string;
-    tokenHash: string;
-    expiresAt: Date;
-  }): Promise<MagicLinkToken>;
+  createToken(input: { userId?: string; email: string; tokenHash: string; expiresAt: Date }): Promise<MagicLinkToken>;
   findActiveTokenByHash(tokenHash: string): Promise<MaybeFound<MagicLinkToken>>;
   consumeToken(tokenId: string): Promise<boolean>;
 }
@@ -322,10 +330,7 @@ export interface SessionAdapter {
 }
 
 export interface OrganizationSessionAdapter {
-  setActiveOrganization(
-    sessionId: string,
-    organizationId?: string,
-  ): Promise<MaybeFound<Session>>;
+  setActiveOrganization(sessionId: string, organizationId?: string): Promise<MaybeFound<Session>>;
 }
 
 export interface OrganizationsPluginHandlers<

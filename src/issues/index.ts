@@ -1,8 +1,6 @@
 import { CancellableEvent } from "../core/events.js";
 
-export type PathSegment =
-  | { readonly key: PropertyKey }
-  | { readonly index: number };
+export type PathSegment = { readonly key: PropertyKey } | { readonly index: number };
 
 export interface Issue {
   readonly message: string;
@@ -16,10 +14,7 @@ export type IssueFactory<TSchema extends object> = {
   $root: (message: string) => Issue;
 };
 
-export function createIssue(
-  message: string,
-  path?: ReadonlyArray<PropertyKey | PathSegment>,
-): Issue {
+export function createIssue(message: string, path?: ReadonlyArray<PropertyKey | PathSegment>): Issue {
   if (!path || path.length === 0) {
     return { message };
   }

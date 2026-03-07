@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import { OglofusAuth, passwordPlugin, type PasswordCredentialAdapter, type UserBase } from "../src/index.js";
 import {
@@ -137,17 +137,11 @@ test("discover is rate limited when rateLimiter is configured", async () => {
   });
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const result = await auth.discover(
-      { intent: "login", email: "existing@example.com" },
-      { ip: "203.0.113.10" },
-    );
+    const result = await auth.discover({ intent: "login", email: "existing@example.com" }, { ip: "203.0.113.10" });
     assert.equal(result.ok, true);
   }
 
-  const blocked = await auth.discover(
-    { intent: "login", email: "existing@example.com" },
-    { ip: "203.0.113.10" },
-  );
+  const blocked = await auth.discover({ intent: "login", email: "existing@example.com" }, { ip: "203.0.113.10" });
 
   assert.equal(blocked.ok, false);
   if (!blocked.ok) {

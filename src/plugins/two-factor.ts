@@ -1,14 +1,10 @@
-import { randomBytes } from "node:crypto";
 import { createTOTPKeyURI, generateTOTP, verifyTOTPWithGracePeriod } from "@oslojs/otp";
+import { randomBytes } from "node:crypto";
+import { addSeconds, createId, createToken, secretHash } from "../core/utils.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
-import { addSeconds, createId, createToken, secretHash } from "../core/utils.js";
-import type {
-  RecoveryCodeAdapter,
-  TotpAdapter,
-  TwoFactorChallengeAdapter,
-} from "../types/adapters.js";
-import type { AuthRequestContext, SecondFactorMethod, TwoFactorVerifyInput, UserBase } from "../types/model.js";
+import type { RecoveryCodeAdapter, TotpAdapter, TwoFactorChallengeAdapter } from "../types/adapters.js";
+import type { AuthRequestContext, SecondFactorMethod, UserBase } from "../types/model.js";
 import type { DomainPlugin, TwoFactorPluginApi } from "../types/plugins.js";
 import { errorOperation, successOperation } from "../types/results.js";
 
@@ -39,13 +35,7 @@ const toTotpKey = (secret: string): Uint8Array => Buffer.from(secret, "base64url
 
 const verifyTotpCode = (secret: string, code: string): boolean => {
   try {
-    return verifyTOTPWithGracePeriod(
-      toTotpKey(secret),
-      TOTP_INTERVAL_SECONDS,
-      TOTP_DIGITS,
-      code,
-      TOTP_GRACE_SECONDS,
-    );
+    return verifyTOTPWithGracePeriod(toTotpKey(secret), TOTP_INTERVAL_SECONDS, TOTP_DIGITS, code, TOTP_GRACE_SECONDS);
   } catch {
     return false;
   }
@@ -61,8 +51,7 @@ const generateTotpForTest = (secret: string, at = new Date()): string => {
   }
 };
 
-const recoveryHash = (userId: string, code: string): string =>
-  secretHash(code.toUpperCase(), `recovery:${userId}`);
+const recoveryHash = (userId: string, code: string): string => secretHash(code.toUpperCase(), `recovery:${userId}`);
 
 export const twoFactorPlugin = <U extends UserBase>(
   config: TwoFactorPluginConfig<U>,
@@ -120,9 +109,7 @@ export const twoFactorPlugin = <U extends UserBase>(
         }
 
         if (!challenge.availableSecondFactors.includes(input.method)) {
-          return errorOperation(
-            new AuthError("TWO_FACTOR_INVALID", "Second factor method is not allowed.", 400),
-          );
+          return errorOperation(new AuthError("TWO_FACTOR_INVALID", "Second factor method is not allowed.", 400));
         }
 
         const user = await ctx.adapters.users.findById(challenge.userId);
@@ -152,18 +139,11 @@ export const twoFactorPlugin = <U extends UserBase>(
         } else if (input.method === "recovery_code") {
           if (!config.recoveryCodes) {
             return errorOperation(
-              new AuthError(
-                "PLUGIN_MISCONFIGURED",
-                "Recovery code adapter missing in two_factor plugin.",
-                500,
-              ),
+              new AuthError("PLUGIN_MISCONFIGURED", "Recovery code adapter missing in two_factor plugin.", 500),
             );
           }
 
-          const consumed = await config.recoveryCodes.consume(
-            user.id,
-            recoveryHash(user.id, input.code),
-          );
+          const consumed = await config.recoveryCodes.consume(user.id, recoveryHash(user.id, input.code));
           if (!consumed) {
             return errorOperation(
               new AuthError("RECOVERY_CODE_INVALID", "Invalid recovery code.", 400, [
@@ -175,9 +155,7 @@ export const twoFactorPlugin = <U extends UserBase>(
 
         const consumedChallenge = await config.challenges.consume(challenge.id);
         if (!consumedChallenge) {
-          return errorOperation(
-            new AuthError("TWO_FACTOR_INVALID", "Two-factor challenge already consumed.", 400),
-          );
+          return errorOperation(new AuthError("TWO_FACTOR_INVALID", "Two-factor challenge already consumed.", 400));
         }
 
         return successOperation({ user });
@@ -193,13 +171,7 @@ export const twoFactorPlugin = <U extends UserBase>(
         const secret = randomBytes(20).toString("base64url");
         enrollments.set(enrollmentId, { userId, secret });
 
-        const otpauthUri = createTOTPKeyURI(
-          issuer,
-          userId,
-          toTotpKey(secret),
-          TOTP_INTERVAL_SECONDS,
-          TOTP_DIGITS,
-        );
+        const otpauthUri = createTOTPKeyURI(issuer, userId, toTotpKey(secret), TOTP_INTERVAL_SECONDS, TOTP_DIGITS);
 
         return successOperation({
           enrollmentId,
@@ -233,11 +205,7 @@ export const twoFactorPlugin = <U extends UserBase>(
       regenerateRecoveryCodes: async (userId) => {
         if (!config.recoveryCodes) {
           return errorOperation(
-            new AuthError(
-              "PLUGIN_MISCONFIGURED",
-              "Recovery code adapter missing in two_factor plugin.",
-              500,
-            ),
+            new AuthError("PLUGIN_MISCONFIGURED", "Recovery code adapter missing in two_factor plugin.", 500),
           );
         }
 

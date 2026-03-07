@@ -1,16 +1,29 @@
 import type {
   AuditAdapter,
   AuditRecord,
-  IdentityAdapter,
   IdempotencyAdapter,
+  IdentityAdapter,
+  OutboxAdapter,
+  OutboxMessage,
   OrganizationSessionAdapter,
   PendingProfileAdapter,
   PendingProfileRecord,
   RateLimiterAdapter,
   SessionAdapter,
+  StripeCustomerAdapter,
+  StripeSubscriptionAdapter,
+  StripeTrialUsageAdapter,
+  StripeWebhookEventAdapter,
   UserAdapter,
 } from "../../src/types/adapters.js";
-import type { Session, SignInMethodHint, UserBase } from "../../src/types/model.js";
+import type {
+  Session,
+  SignInMethodHint,
+  StripeCustomerRecord,
+  StripeSubject,
+  StripeSubscriptionSnapshot,
+  UserBase,
+} from "../../src/types/model.js";
 
 export type TestUser = UserBase & {
   given_name?: string;
@@ -229,5 +242,103 @@ export const createIdempotencyStore = () => {
   return {
     seen,
     adapter,
+  };
+};
+
+export const createOutboxStore = () => {
+  const messages: OutboxMessage[] = [];
+  const delivered = new Set<string>();
+  const failed = new Map<string, { reason: string; retryAt?: Date }>();
+
+  const adapter: OutboxAdapter = {
+    enqueue: async (message) => {
+      messages.push(message);
+    },
+    markDelivered: async (messageId) => {
+      delivered.add(messageId);
+    },
+    markFailed: async (messageId, reason, retryAt) => {
+      failed.set(messageId, { reason, retryAt });
+    },
+  };
+
+  return {
+    messages,
+    delivered,
+    failed,
+    adapter,
+  };
+};
+
+const stripeSubjectKey = (subject: StripeSubject): string =>
+  subject.kind === "user" ? `user:${subject.userId}` : `organization:${subject.organizationId}`;
+
+export const createStripeBillingStore = <Feature extends string, LimitKey extends string>() => {
+  const customersByStripeId = new Map<string, StripeCustomerRecord>();
+  const subscriptionsByStripeId = new Map<string, StripeSubscriptionSnapshot<Feature, LimitKey>>();
+  const processedEvents = new Set<string>();
+  const trialUsage = new Set<string>();
+
+  const customers: StripeCustomerAdapter = {
+    findBySubject: async (subject) =>
+      [...customersByStripeId.values()].find(
+        (record) => stripeSubjectKey(record.subject) === stripeSubjectKey(subject),
+      ) ?? null,
+    findByStripeCustomerId: async (stripeCustomerId) => customersByStripeId.get(stripeCustomerId) ?? null,
+    create: async (record) => {
+      customersByStripeId.set(record.stripeCustomerId, record);
+    },
+    updateByStripeCustomerId: async (stripeCustomerId, patch) => {
+      const current = customersByStripeId.get(stripeCustomerId);
+      if (!current) {
+        return;
+      }
+      customersByStripeId.set(stripeCustomerId, {
+        ...current,
+        ...patch,
+      });
+    },
+  };
+
+  const subscriptions: StripeSubscriptionAdapter<Feature, LimitKey> = {
+    findActiveBySubject: async (subject) =>
+      [...subscriptionsByStripeId.values()].find(
+        (snapshot) =>
+          stripeSubjectKey(snapshot.subject) === stripeSubjectKey(subject) && snapshot.status !== "canceled",
+      ) ?? null,
+    findByStripeSubscriptionId: async (stripeSubscriptionId) =>
+      subscriptionsByStripeId.get(stripeSubscriptionId) ?? null,
+    listBySubject: async (subject) =>
+      [...subscriptionsByStripeId.values()].filter(
+        (snapshot) => stripeSubjectKey(snapshot.subject) === stripeSubjectKey(subject),
+      ),
+    upsert: async (snapshot) => {
+      subscriptionsByStripeId.set(snapshot.stripeSubscriptionId, snapshot);
+    },
+  };
+
+  const events: StripeWebhookEventAdapter = {
+    hasProcessed: async (eventId) => processedEvents.has(eventId),
+    markProcessed: async ({ eventId }) => {
+      processedEvents.add(eventId);
+    },
+  };
+
+  const trials: StripeTrialUsageAdapter = {
+    hasUsedTrial: async ({ subject, planKey }) => trialUsage.has(`${stripeSubjectKey(subject)}:${planKey}`),
+    markUsedTrial: async ({ subject, planKey }) => {
+      trialUsage.add(`${stripeSubjectKey(subject)}:${planKey}`);
+    },
+  };
+
+  return {
+    customersByStripeId,
+    subscriptionsByStripeId,
+    processedEvents,
+    trialUsage,
+    customers,
+    subscriptions,
+    events,
+    trials,
   };
 };

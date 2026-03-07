@@ -1,14 +1,20 @@
+import { addSeconds, createId, createToken, deterministicTokenHash } from "../core/utils.js";
 import { AuthError } from "../errors/index.js";
 import { createIssue } from "../issues/index.js";
 import type {
   MembershipBase,
   OrganizationBase,
   OrganizationRoleCatalog,
+  StripeEntitlementSnapshot,
   UserBase,
 } from "../types/model.js";
-import type { OrganizationsPluginConfig, OrganizationsPluginApi, DomainPlugin } from "../types/plugins.js";
+import type {
+  DomainPlugin,
+  OrganizationsPluginApi,
+  OrganizationsPluginConfig,
+  StripePluginApi,
+} from "../types/plugins.js";
 import { errorOperation, successOperation, type OperationResult } from "../types/results.js";
-import { addSeconds, createId, createToken, deterministicTokenHash } from "../core/utils.js";
 
 export type OrganizationsPluginOptions<
   O extends OrganizationBase,
@@ -21,11 +27,7 @@ export type OrganizationsPluginOptions<
 > = OrganizationsPluginConfig<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields> & {
   inviteBaseUrl: string;
   inviteTtlSeconds?: number;
-  canAssignRole?: (input: {
-    actorMembership: M;
-    targetMembership: M;
-    nextRole: Role;
-  }) => boolean | Promise<boolean>;
+  canAssignRole?: (input: { actorMembership: M; targetMembership: M; nextRole: Role }) => boolean | Promise<boolean>;
 };
 
 type ResolvedRole<Permission extends string, Feature extends string, LimitKey extends string> = {
@@ -41,17 +43,14 @@ const findOwnerRoles = <
   Permission extends string,
   Feature extends string,
   LimitKey extends string,
->(roles: OrganizationRoleCatalog<Role, Permission, Feature, LimitKey>): Role[] =>
+>(
+  roles: OrganizationRoleCatalog<Role, Permission, Feature, LimitKey>,
+): Role[] =>
   (Object.entries(roles) as Array<[Role, (typeof roles)[Role]]>)
     .filter(([, definition]) => definition.system?.owner)
     .map(([role]) => role);
 
-const resolveRole = <
-  Role extends string,
-  Permission extends string,
-  Feature extends string,
-  LimitKey extends string,
->(
+const resolveRole = <Role extends string, Permission extends string, Feature extends string, LimitKey extends string>(
   role: Role,
   roles: OrganizationRoleCatalog<Role, Permission, Feature, LimitKey>,
   visited = new Set<Role>(),
@@ -123,56 +122,33 @@ export const organizationsPlugin = <
     U,
     OrganizationsPluginApi<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>
   > & {
-    __organizationConfig: OrganizationsPluginOptions<
-      O,
-      Role,
-      M,
-      Permission,
-      Feature,
-      LimitKey,
-      RequiredOrgFields
-    >;
+    __organizationConfig: OrganizationsPluginOptions<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>;
   } = {
     kind: "domain",
     method: "organizations",
     version: "2.0.0",
     __organizationConfig: config,
     createApi: (ctx) => {
-      const ensureActorMembership = async (
-        userId: string,
-        organizationId: string,
-      ): Promise<OperationResult<M>> => {
-        const membership = await config.handlers.memberships.findByUserAndOrganization(
-          userId,
-          organizationId,
-        );
+      const ensureActorMembership = async (userId: string, organizationId: string): Promise<OperationResult<M>> => {
+        const membership = await config.handlers.memberships.findByUserAndOrganization(userId, organizationId);
 
         if (!membership || membership.status !== "active") {
           return errorOperation(
-            new AuthError(
-              "MEMBERSHIP_FORBIDDEN",
-              "Active membership is required for this organization.",
-              403,
-            ),
+            new AuthError("MEMBERSHIP_FORBIDDEN", "Active membership is required for this organization.", 403),
           );
         }
 
         return successOperation(membership);
       };
 
-      const ensureOwner = async (
-        userId: string,
-        organizationId: string,
-      ): Promise<OperationResult<M>> => {
+      const ensureOwner = async (userId: string, organizationId: string): Promise<OperationResult<M>> => {
         const membershipRes = await ensureActorMembership(userId, organizationId);
         if (!membershipRes.ok) {
           return membershipRes;
         }
 
         if (!ownerRoles.includes(membershipRes.data.role)) {
-          return errorOperation(
-            new AuthError("MEMBERSHIP_FORBIDDEN", "Owner role required for this action.", 403),
-          );
+          return errorOperation(new AuthError("MEMBERSHIP_FORBIDDEN", "Owner role required for this action.", 403));
         }
 
         return membershipRes;
@@ -181,23 +157,44 @@ export const organizationsPlugin = <
       const getEntitlementsInternal = async (
         organizationId: string,
         userId: string,
-      ): Promise<OperationResult<{ features: Partial<Record<Feature, boolean>>; limits: Partial<Record<LimitKey, number>> }>> => {
+      ): Promise<
+        OperationResult<{ features: Partial<Record<Feature, boolean>>; limits: Partial<Record<LimitKey, number>> }>
+      > => {
         const membershipRes = await ensureActorMembership(userId, organizationId);
         if (!membershipRes.ok) {
           return membershipRes;
         }
 
         const resolved = resolveRole(membershipRes.data.role, config.handlers.roles);
+        const stripeApi = ctx.getPluginApi?.<StripePluginApi<Feature, LimitKey>>("stripe") ?? null;
+        let billingEntitlements: StripeEntitlementSnapshot<Feature, LimitKey> = {
+          features: {},
+          limits: {},
+        };
+        if (stripeApi) {
+          const stripeEntitlements = await stripeApi.getEntitlements({
+            subject: {
+              kind: "organization",
+              organizationId,
+            },
+          });
+          if (!stripeEntitlements.ok) {
+            return stripeEntitlements;
+          }
+          billingEntitlements = stripeEntitlements.data;
+        }
         const featureOverrides = await config.handlers.entitlements.getFeatureOverrides(organizationId);
         const limitOverrides = await config.handlers.entitlements.getLimitOverrides(organizationId);
 
         return successOperation({
           features: {
             ...resolved.features,
+            ...billingEntitlements.features,
             ...featureOverrides,
           },
           limits: {
             ...resolved.limits,
+            ...billingEntitlements.limits,
             ...limitOverrides,
           },
         });
@@ -243,9 +240,7 @@ export const organizationsPlugin = <
             return { organization, membership };
           };
 
-          const data = ctx.adapters.withTransaction
-            ? await ctx.adapters.withTransaction(run)
-            : await run();
+          const data = ctx.adapters.withTransaction ? await ctx.adapters.withTransaction(run) : await run();
 
           return successOperation(data);
         },
@@ -312,15 +307,11 @@ export const organizationsPlugin = <
           );
 
           if (!invite) {
-            return errorOperation(
-              new AuthError("ORGANIZATION_INVITE_INVALID", "Invalid invite token.", 400),
-            );
+            return errorOperation(new AuthError("ORGANIZATION_INVITE_INVALID", "Invalid invite token.", 400));
           }
 
           if (invite.expiresAt.getTime() <= ctx.now().getTime()) {
-            return errorOperation(
-              new AuthError("ORGANIZATION_INVITE_EXPIRED", "Invite token expired.", 400),
-            );
+            return errorOperation(new AuthError("ORGANIZATION_INVITE_EXPIRED", "Invite token expired.", 400));
           }
 
           const user = await ctx.adapters.users.findById(input.userId);
@@ -336,9 +327,7 @@ export const organizationsPlugin = <
 
           const consumed = await config.handlers.invites.consume(invite.id);
           if (!consumed) {
-            return errorOperation(
-              new AuthError("ORGANIZATION_INVITE_INVALID", "Invite already used/revoked.", 400),
-            );
+            return errorOperation(new AuthError("ORGANIZATION_INVITE_INVALID", "Invite already used/revoked.", 400));
           }
 
           const existing = await config.handlers.memberships.findByUserAndOrganization(
@@ -354,14 +343,9 @@ export const organizationsPlugin = <
             }
             membership = updatedRole;
             if (membership.status !== "active") {
-              const updatedStatus = await config.handlers.memberships.setStatus(
-                membership.id,
-                "active",
-              );
+              const updatedStatus = await config.handlers.memberships.setStatus(membership.id, "active");
               if (!updatedStatus) {
-                return errorOperation(
-                  new AuthError("MEMBERSHIP_NOT_FOUND", "Membership not found.", 404),
-                );
+                return errorOperation(new AuthError("MEMBERSHIP_NOT_FOUND", "Membership not found.", 404));
               }
               membership = updatedStatus;
             }
@@ -388,8 +372,7 @@ export const organizationsPlugin = <
           if (input.organizationId) {
             const memberships = await config.handlers.memberships.listByUser(session.userId);
             const active = memberships.find(
-              (membership) =>
-                membership.organizationId === input.organizationId && membership.status === "active",
+              (membership) => membership.organizationId === input.organizationId && membership.status === "active",
             );
 
             if (!active) {
@@ -440,9 +423,7 @@ export const organizationsPlugin = <
             });
 
             if (!allowed) {
-              return errorOperation(
-                new AuthError("ROLE_NOT_ASSIGNABLE", "Role assignment not allowed.", 403),
-              );
+              return errorOperation(new AuthError("ROLE_NOT_ASSIGNABLE", "Role assignment not allowed.", 403));
             }
           }
 
@@ -456,11 +437,7 @@ export const organizationsPlugin = <
 
             if (activeOwners.length <= 1) {
               return errorOperation(
-                new AuthError(
-                  "LAST_OWNER_GUARD",
-                  "Cannot remove/demote the last organization owner.",
-                  409,
-                ),
+                new AuthError("LAST_OWNER_GUARD", "Cannot remove/demote the last organization owner.", 409),
               );
             }
           }
@@ -489,11 +466,7 @@ export const organizationsPlugin = <
             return owner;
           }
 
-          await config.handlers.entitlements.setFeatureOverride(
-            input.organizationId,
-            input.feature,
-            input.enabled,
-          );
+          await config.handlers.entitlements.setFeatureOverride(input.organizationId, input.feature, input.enabled);
 
           return successOperation({
             organizationId: input.organizationId,
@@ -512,11 +485,7 @@ export const organizationsPlugin = <
             return owner;
           }
 
-          await config.handlers.entitlements.setLimitOverride(
-            input.organizationId,
-            input.key,
-            input.value,
-          );
+          await config.handlers.entitlements.setLimitOverride(input.organizationId, input.key, input.value);
 
           return successOperation({
             organizationId: input.organizationId,

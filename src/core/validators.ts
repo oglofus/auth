@@ -1,5 +1,5 @@
-import { createIssue } from "../issues/index.js";
 import { AuthError } from "../errors/index.js";
+import { createIssue } from "../issues/index.js";
 
 export const ensureFields = (
   source: Record<string, unknown>,

@@ -29,6 +29,7 @@ Optional for app-level integrations:
 
 - `arctic` for OAuth providers in your app code.
 - `@oslojs/otp` if you need direct OTP utilities in your app (the library already uses it internally for TOTP).
+- `stripe` if you use the Stripe billing plugin.
 
 ## Quick Start (Password)
 
@@ -127,15 +128,9 @@ You can build issues with helpers:
 ```ts
 import { createIssue, createIssueFactory } from "@oglofus/auth";
 
-const issue = createIssueFactory<{ email: string; profile: unknown }>([
-  "email",
-  "profile",
-] as const);
+const issue = createIssueFactory<{ email: string; profile: unknown }>(["email", "profile"] as const);
 issue.email("Email is required");
-issue.$path(
-  ["profile", { key: "addresses" }, { index: 0 }, "city"],
-  "City is required",
-);
+issue.$path(["profile", { key: "addresses" }, { index: 0 }, "city"], "City is required");
 createIssue("Generic failure");
 ```
 
@@ -240,6 +235,14 @@ const result = await auth.authenticate({
 - Multi-tenant orgs, memberships, role inheritance, feature/limit entitlements, invites.
 - Validates role topology on startup (default role, owner role presence, inheritance cycles).
 
+### Stripe (Domain Plugin)
+
+- Method: `"stripe"`
+- User and organization subscriptions with typed billing subjects.
+- Checkout session creation, billing portal sessions, webhook verification, local subscription snapshots.
+- Plan-level features and limits, trial tracking, and organization entitlement merge support.
+- Requires the `stripe` package in your application.
+
 ## Account Discovery
 
 Use `discover(...)` to support login/register routing logic before full auth:
@@ -257,6 +260,8 @@ See ready-to-copy integrations:
 - [`examples/sveltekit-email-otp`](./examples/sveltekit-email-otp)
 - [`examples/oauth2-google-arctic`](./examples/oauth2-google-arctic)
 - [`examples/two-factor-totp-oslo`](./examples/two-factor-totp-oslo)
+- [`examples/stripe-user-billing`](./examples/stripe-user-billing)
+- [`examples/stripe-organization-billing`](./examples/stripe-organization-billing)
 
 ## Scripts
 

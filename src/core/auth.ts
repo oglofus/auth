@@ -1,4 +1,30 @@
 import { AuthError } from "../errors/index.js";
+import type { Issue } from "../issues/index.js";
+import { createIssue } from "../issues/index.js";
+import type { AuditRecord } from "../types/adapters.js";
+import type {
+  AuthRequestContext,
+  CompleteProfileInput,
+  DiscoverAccountDecision,
+  DiscoverAccountInput,
+  Session,
+  TwoFactorRequiredMeta,
+  TwoFactorVerifyInput,
+  UserBase,
+} from "../types/model.js";
+import type {
+  AnyMethodPlugin,
+  AnyPlugin,
+  AuthConfig,
+  AuthPublicApi,
+  AuthSecurityRateLimitPolicy,
+  AuthSecurityRateLimitScope,
+  AuthenticateInputFromPlugins,
+  PluginApiMap,
+  PluginMethodsWithApi,
+  RegisterInputFromPlugins,
+  TwoFactorPluginApi,
+} from "../types/plugins.js";
 import {
   errorOperation,
   errorResult,
@@ -15,32 +41,6 @@ import {
   normalizeEmailDefault,
   now,
 } from "./utils.js";
-import type {
-  AuthConfig,
-  AuthSecurityRateLimitPolicy,
-  AuthSecurityRateLimitScope,
-  AuthenticateInputFromPlugins,
-  AuthPublicApi,
-  AnyPlugin,
-  AnyMethodPlugin,
-  PluginApiMap,
-  PluginMethodsWithApi,
-  RegisterInputFromPlugins,
-  TwoFactorPluginApi,
-} from "../types/plugins.js";
-import type {
-  AuthRequestContext,
-  CompleteProfileInput,
-  DiscoverAccountDecision,
-  DiscoverAccountInput,
-  Session,
-  TwoFactorRequiredMeta,
-  TwoFactorVerifyInput,
-  UserBase,
-} from "../types/model.js";
-import type { Issue } from "../issues/index.js";
-import { createIssue } from "../issues/index.js";
-import type { AuditRecord } from "../types/adapters.js";
 
 const hasEmail = (value: unknown): value is { email: string } =>
   typeof value === "object" && value !== null && "email" in value && typeof (value as any).email === "string";
@@ -63,10 +63,7 @@ type OrganizationPluginWithConfig = {
   };
 };
 
-const DEFAULT_RATE_LIMIT_POLICIES: Record<
-  AuthSecurityRateLimitScope,
-  AuthSecurityRateLimitPolicy
-> = {
+const DEFAULT_RATE_LIMIT_POLICIES: Record<AuthSecurityRateLimitScope, AuthSecurityRateLimitPolicy> = {
   discover: { limit: 10, windowSeconds: 60 },
   register: { limit: 5, windowSeconds: 300 },
   authenticate: { limit: 10, windowSeconds: 300 },
@@ -75,10 +72,7 @@ const DEFAULT_RATE_LIMIT_POLICIES: Record<
   otpVerify: { limit: 10, windowSeconds: 300 },
 };
 
-export class OglofusAuth<
-  U extends UserBase,
-  P extends readonly AnyPlugin<U>[],
-> implements AuthPublicApi<U, P> {
+export class OglofusAuth<U extends UserBase, P extends readonly AnyPlugin<U>[]> implements AuthPublicApi<U, P> {
   private readonly pluginMap = new Map<string, P[number]>();
   private readonly apiMap = new Map<string, unknown>();
   private readonly normalizeEmail: (value: string) => string;
@@ -86,6 +80,14 @@ export class OglofusAuth<
   constructor(private readonly config: AuthConfig<U, P>) {
     this.normalizeEmail = config.normalize?.email ?? normalizeEmailDefault;
     this.validatePlugins();
+
+    const getPluginApi = <T = unknown>(method: string): T | null => {
+      if (!this.apiMap.has(method)) {
+        return null;
+      }
+
+      return this.apiMap.get(method) as T;
+    };
 
     for (const plugin of config.plugins) {
       this.pluginMap.set(plugin.method, plugin);
@@ -96,6 +98,7 @@ export class OglofusAuth<
             adapters: this.config.adapters,
             now,
             security: this.config.security,
+            getPluginApi,
           }),
         );
       }
@@ -183,11 +186,7 @@ export class OglofusAuth<
     }
 
     const normalized = this.normalizeAuthInput(input);
-    const rateLimitError = await this.consumeRateLimit(
-      "authenticate",
-      this.getRateLimitIdentity(normalized),
-      request,
-    );
+    const rateLimitError = await this.consumeRateLimit("authenticate", this.getRateLimitIdentity(normalized), request);
     if (rateLimitError) {
       await this.writeAudit({
         action: "authenticate",
@@ -270,10 +269,7 @@ export class OglofusAuth<
     return successResult(result.data.user, sessionId, result.issues);
   }
 
-  public async register(
-    input: RegisterInputFromPlugins<P>,
-    request?: AuthRequestContext,
-  ): Promise<AuthResult<U>> {
+  public async register(input: RegisterInputFromPlugins<P>, request?: AuthRequestContext): Promise<AuthResult<U>> {
     const method = (input as any).method as string;
     const plugin = this.getAuthMethodPlugin(method);
     if (!plugin) {
@@ -281,17 +277,11 @@ export class OglofusAuth<
     }
 
     if (!plugin.supports.register || !plugin.register) {
-      return errorResult(
-        new AuthError("METHOD_NOT_REGISTERABLE", `Method ${method} does not support register.`, 400),
-      );
+      return errorResult(new AuthError("METHOD_NOT_REGISTERABLE", `Method ${method} does not support register.`, 400));
     }
 
     const normalized = this.normalizeAuthInput(input);
-    const rateLimitError = await this.consumeRateLimit(
-      "register",
-      this.getRateLimitIdentity(normalized),
-      request,
-    );
+    const rateLimitError = await this.consumeRateLimit("register", this.getRateLimitIdentity(normalized), request);
     if (rateLimitError) {
       await this.writeAudit({
         action: "register",
@@ -340,10 +330,7 @@ export class OglofusAuth<
     return this.apiMap.get(method as string) as PluginApiMap<P>[M];
   }
 
-  public async verifySecondFactor(
-    input: TwoFactorVerifyInput,
-    request?: AuthRequestContext,
-  ): Promise<AuthResult<U>> {
+  public async verifySecondFactor(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<AuthResult<U>> {
     const twoFactor = this.tryGetTwoFactorApi();
     if (!twoFactor) {
       return errorResult(new AuthError("METHOD_DISABLED", "two_factor plugin is not enabled.", 400));
@@ -358,15 +345,10 @@ export class OglofusAuth<
     return successResult(result.data.user, sessionId, result.issues);
   }
 
-  public async completeProfile(
-    input: CompleteProfileInput<U>,
-    request?: AuthRequestContext,
-  ): Promise<AuthResult<U>> {
+  public async completeProfile(input: CompleteProfileInput<U>, request?: AuthRequestContext): Promise<AuthResult<U>> {
     const pending = this.config.adapters.pendingProfiles;
     if (!pending) {
-      return errorResult(
-        new AuthError("PLUGIN_MISCONFIGURED", "pendingProfiles adapter is not configured.", 500),
-      );
+      return errorResult(new AuthError("PLUGIN_MISCONFIGURED", "pendingProfiles adapter is not configured.", 500));
     }
 
     const record = await pending.findById(input.pendingProfileId);
@@ -381,9 +363,7 @@ export class OglofusAuth<
           pendingProfileId: input.pendingProfileId,
         },
       });
-      return errorResult(
-        new AuthError("PROFILE_COMPLETION_EXPIRED", "Profile completion has expired.", 400),
-      );
+      return errorResult(new AuthError("PROFILE_COMPLETION_EXPIRED", "Profile completion has expired.", 400));
     }
 
     const missingIssues: Issue[] = [];
@@ -474,9 +454,7 @@ export class OglofusAuth<
       return { ok: true, user: persisted.user };
     };
 
-    let finalized:
-      | { ok: true; user: U }
-      | { ok: false; error: AuthError };
+    let finalized: { ok: true; user: U } | { ok: false; error: AuthError };
     try {
       finalized = this.config.adapters.withTransaction
         ? await this.config.adapters.withTransaction(finalize)
@@ -509,9 +487,7 @@ export class OglofusAuth<
           pendingProfileId: input.pendingProfileId,
         },
       });
-      return errorResult(
-        finalized.error,
-      );
+      return errorResult(finalized.error);
     }
 
     const sessionId = await this.createSession(finalized.user.id);
@@ -583,9 +559,7 @@ export class OglofusAuth<
       }
     }
 
-    const created = await this.config.adapters.users.create(
-      merged as Omit<U, "id" | "createdAt" | "updatedAt">,
-    );
+    const created = await this.config.adapters.users.create(merged as Omit<U, "id" | "createdAt" | "updatedAt">);
     return { ok: true, user: created };
   }
 
@@ -595,6 +569,13 @@ export class OglofusAuth<
       now,
       security: this.config.security,
       request,
+      getPluginApi: <T = unknown>(method: string): T | null => {
+        if (!this.apiMap.has(method)) {
+          return null;
+        }
+
+        return this.apiMap.get(method) as T;
+      },
     };
   }
 
@@ -631,9 +612,7 @@ export class OglofusAuth<
     return api as TwoFactorPluginApi<U>;
   }
 
-  private resolveRateLimitPolicy(
-    scope: AuthSecurityRateLimitScope,
-  ): AuthSecurityRateLimitPolicy | null {
+  private resolveRateLimitPolicy(scope: AuthSecurityRateLimitScope): AuthSecurityRateLimitPolicy | null {
     if (!this.config.adapters.rateLimiter) {
       return null;
     }
@@ -666,17 +645,11 @@ export class OglofusAuth<
       "Too many requests.",
       429,
       [],
-      result.retryAfterSeconds === undefined
-        ? undefined
-        : { retryAfterSeconds: result.retryAfterSeconds },
+      result.retryAfterSeconds === undefined ? undefined : { retryAfterSeconds: result.retryAfterSeconds },
     );
   }
 
-  private makeRateLimitKey(
-    scope: AuthSecurityRateLimitScope,
-    identity: string,
-    request?: AuthRequestContext,
-  ): string {
+  private makeRateLimitKey(scope: AuthSecurityRateLimitScope, identity: string, request?: AuthRequestContext): string {
     if (!request?.ip) {
       return `${scope}:identity:${identity}`;
     }
@@ -738,9 +711,7 @@ export class OglofusAuth<
   private runValidator<T>(
     validator: ((input: unknown) => T) | undefined,
     input: unknown,
-  ):
-    | { ok: true; input: T }
-    | { ok: false; result: AuthResult<U> } {
+  ): { ok: true; input: T } | { ok: false; result: AuthResult<U> } {
     if (!validator) {
       return { ok: true, input: input as T };
     }
@@ -762,14 +733,11 @@ export class OglofusAuth<
     const methods = new Set<string>();
     let twoFactorCount = 0;
     let organizationsCount = 0;
+    let stripeCount = 0;
 
     for (const plugin of this.config.plugins) {
       if (methods.has(plugin.method)) {
-        throw new AuthError(
-          "PLUGIN_METHOD_CONFLICT",
-          `Plugin method conflict for '${plugin.method}'.`,
-          500,
-        );
+        throw new AuthError("PLUGIN_METHOD_CONFLICT", `Plugin method conflict for '${plugin.method}'.`, 500);
       }
       methods.add(plugin.method);
 
@@ -779,6 +747,10 @@ export class OglofusAuth<
 
       if (plugin.method === "organizations") {
         organizationsCount += 1;
+      }
+
+      if (plugin.method === "stripe") {
+        stripeCount += 1;
       }
 
       if (plugin.kind === "auth_method") {
@@ -821,11 +793,11 @@ export class OglofusAuth<
     }
 
     if (organizationsCount > 1) {
-      throw new AuthError(
-        "PLUGIN_MISCONFIGURED",
-        "At most one organizations plugin is allowed.",
-        500,
-      );
+      throw new AuthError("PLUGIN_MISCONFIGURED", "At most one organizations plugin is allowed.", 500);
+    }
+
+    if (stripeCount > 1) {
+      throw new AuthError("PLUGIN_MISCONFIGURED", "At most one stripe plugin is allowed.", 500);
     }
 
     if ((this.config.accountDiscovery?.mode ?? "private") === "explicit" && !this.config.adapters.identity) {
@@ -836,16 +808,12 @@ export class OglofusAuth<
       );
     }
 
-    const orgPlugin = this.config.plugins.find(
-      (plugin) => plugin.method === "organizations",
-    ) as (P[number] & OrganizationPluginWithConfig) | undefined;
+    const orgPlugin = this.config.plugins.find((plugin) => plugin.method === "organizations") as
+      | (P[number] & OrganizationPluginWithConfig)
+      | undefined;
 
     if (orgPlugin && !orgPlugin.__organizationConfig?.handlers?.organizationSessions) {
-      throw new AuthError(
-        "PLUGIN_MISCONFIGURED",
-        "organizations plugin requires handlers.organizationSessions.",
-        500,
-      );
+      throw new AuthError("PLUGIN_MISCONFIGURED", "organizations plugin requires handlers.organizationSessions.", 500);
     }
 
     if (this.config.validateConfigOnStart) {
@@ -866,11 +834,7 @@ export class OglofusAuth<
         }
 
         if (ownerRoles.length < 1) {
-          throw new AuthError(
-            "PLUGIN_MISCONFIGURED",
-            "Organization roles must define at least one owner role.",
-            500,
-          );
+          throw new AuthError("PLUGIN_MISCONFIGURED", "Organization roles must define at least one owner role.", 500);
         }
 
         if (defaultRoles[0] !== defaultRole) {
@@ -882,11 +846,7 @@ export class OglofusAuth<
         }
 
         if (ownerRoles.includes(defaultRole)) {
-          throw new AuthError(
-            "PLUGIN_MISCONFIGURED",
-            "Default organization role cannot be owner.",
-            500,
-          );
+          throw new AuthError("PLUGIN_MISCONFIGURED", "Default organization role cannot be owner.", 500);
         }
 
         this.assertAcyclicRoleInheritance(roleConfig);
@@ -894,9 +854,7 @@ export class OglofusAuth<
     }
   }
 
-  private assertAcyclicRoleInheritance(
-    roles: Record<string, { inherits?: readonly string[] }>,
-  ): void {
+  private assertAcyclicRoleInheritance(roles: Record<string, { inherits?: readonly string[] }>): void {
     const visiting = new Set<string>();
     const visited = new Set<string>();
 
@@ -906,11 +864,7 @@ export class OglofusAuth<
       }
 
       if (visiting.has(role)) {
-        throw new AuthError(
-          "PLUGIN_MISCONFIGURED",
-          `Cycle detected in role inheritance at '${role}'.`,
-          500,
-        );
+        throw new AuthError("PLUGIN_MISCONFIGURED", `Cycle detected in role inheritance at '${role}'.`, 500);
       }
 
       visiting.add(role);
