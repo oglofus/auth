@@ -1,6 +1,6 @@
 {
   "name": "@oglofus/auth",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Type-safe, plugin-first authentication core",
   "homepage": "https://github.com/oglofus/auth#readme",
   "bugs": {

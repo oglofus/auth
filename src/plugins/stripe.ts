@@ -42,6 +42,12 @@ export type StripePluginConfig<U extends UserBase, Feature extends string, Limit
   customerMode?: "user" | "organization" | "both";
 };
 
+type StripePlanCatalogEntry<Feature extends string, LimitKey extends string> = Omit<StripePlan<Feature, LimitKey>, "scope"> & {
+  scope: StripeSubject["kind"];
+};
+
+type StripePlanCatalog<Feature extends string, LimitKey extends string> = readonly StripePlanCatalogEntry<Feature, LimitKey>[];
+
 const subjectId = (subject: StripeSubject): string =>
   subject.kind === "user" ? subject.userId : subject.organizationId;
 
@@ -177,9 +183,16 @@ const validatePlans = <Feature extends string, LimitKey extends string>(
 
 const normalizeStatus = (status: Stripe.Subscription.Status): StripeSubscriptionSnapshot["status"] => status;
 
-export const stripePlugin = <U extends UserBase, Feature extends string, LimitKey extends string>(
-  config: StripePluginConfig<U, Feature, LimitKey>,
-): DomainPlugin<"stripe", U, StripePluginApi<Feature, LimitKey>> => {
+export const stripePlugin = <
+  U extends UserBase,
+  Feature extends string,
+  LimitKey extends string,
+  const Plans extends StripePlanCatalog<Feature, LimitKey>,
+>(
+  config: Omit<StripePluginConfig<U, Feature, LimitKey>, "plans"> & {
+    plans: StripePlansResolver<Feature, LimitKey, Plans>;
+  },
+): DomainPlugin<"stripe", U, StripePluginApi<Feature, LimitKey>, true> => {
   const customerMode = config.customerMode ?? "both";
   if (Array.isArray(config.plans)) {
     validatePlans(config.plans, customerMode, config.handlers.trials);

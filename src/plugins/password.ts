@@ -16,7 +16,7 @@ export type PasswordPluginConfig<U extends UserBase, K extends keyof U> = {
 
 export const passwordPlugin = <U extends UserBase, K extends keyof U>(
   config: PasswordPluginConfig<U, K>,
-): AuthMethodPlugin<"password", PasswordRegisterInput<U, K>, PasswordAuthenticateInput, U> => ({
+): AuthMethodPlugin<"password", PasswordRegisterInput<U, K>, PasswordAuthenticateInput, U, never, true, false> => ({
   kind: "auth_method",
   method: "password",
   version: "2.0.0",

@@ -20,6 +20,7 @@ import type {
   AuthSecurityRateLimitPolicy,
   AuthSecurityRateLimitScope,
   AuthenticateInputFromPlugins,
+  PluginApiForMethod,
   PluginApiMap,
   PluginMethodsWithApi,
   RegisterInputFromPlugins,
@@ -322,12 +323,12 @@ export class OglofusAuth<U extends UserBase, P extends readonly AnyPlugin<U>[]> 
     return successResult(result.data.user, sessionId, result.issues);
   }
 
-  public method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiMap<P>[M] {
+  public method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiForMethod<P, M> {
     if (!this.apiMap.has(method as string)) {
       throw new AuthError("METHOD_DISABLED", `No API exposed for method ${String(method)}.`, 400);
     }
 
-    return this.apiMap.get(method as string) as PluginApiMap<P>[M];
+    return this.apiMap.get(method as string) as PluginApiForMethod<P, M>;
   }
 
   public async verifySecondFactor(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<AuthResult<U>> {

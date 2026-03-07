@@ -33,7 +33,7 @@ const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
 
 export const emailOtpPlugin = <U extends UserBase, K extends keyof U>(
   config: EmailOtpPluginConfig<U, K>,
-): AuthMethodPlugin<"email_otp", EmailOtpRegisterInput<U, K>, EmailOtpAuthenticateInput, U, EmailOtpPluginApi> => {
+): AuthMethodPlugin<"email_otp", EmailOtpRegisterInput<U, K>, EmailOtpAuthenticateInput, U, EmailOtpPluginApi, true, true> => {
   const ttl = config.challengeTtlSeconds ?? 10 * 60;
   const maxAttempts = config.maxAttempts ?? 5;
   const codeLength = config.codeLength ?? 6;

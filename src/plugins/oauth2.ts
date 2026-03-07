@@ -51,7 +51,7 @@ export type OAuth2ProviderConfig<U extends UserBase, P extends string> = {
 };
 
 export type OAuth2PluginConfig<U extends UserBase, P extends string, K extends keyof U = never> = {
-  providers: { [Provider in P]: OAuth2ProviderConfig<U, Provider> };
+  providers: { [Provider in P]?: OAuth2ProviderConfig<U, Provider> };
   accounts: OAuth2AccountAdapter<P>;
   requiredProfileFields?: readonly K[];
   pendingProfileTtlSeconds?: number;
@@ -94,7 +94,7 @@ const getRefreshToken = (tokens: OAuth2Tokens): string | undefined => {
 
 export const oauth2Plugin = <U extends UserBase, P extends string, K extends keyof U = never>(
   config: OAuth2PluginConfig<U, P, K>,
-): AuthMethodPlugin<"oauth2", OAuth2AuthenticateInput<P>, OAuth2AuthenticateInput<P>, U> => {
+): AuthMethodPlugin<"oauth2", OAuth2AuthenticateInput<P>, OAuth2AuthenticateInput<P>, U, never, false, false> => {
   const ttl = config.pendingProfileTtlSeconds ?? 10 * 60;
   const requiredProfileFields = (config.requiredProfileFields ?? []) as readonly K[];
 

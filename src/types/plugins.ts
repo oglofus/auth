@@ -28,11 +28,17 @@ export interface AuthPluginContext<U extends UserBase> {
   getPluginApi?<T = unknown>(method: string): T | null;
 }
 
-export interface BasePlugin<Method extends string, U extends UserBase, ExposedApi extends object = {}> {
+export interface BasePlugin<
+  Method extends string,
+  U extends UserBase,
+  ExposedApi extends object = never,
+  HasApi extends boolean = boolean,
+> {
   kind: "auth_method" | "domain";
   method: Method;
   version: string;
-  createApi?: (ctx: Omit<AuthPluginContext<U>, "request">) => ExposedApi;
+  createApi?: HasApi extends true ? (ctx: Omit<AuthPluginContext<U>, "request">) => ExposedApi : never;
+  readonly __pluginApiBrand?: HasApi extends true ? ExposedApi : null;
 }
 
 export interface CompletePendingProfileInput<U extends UserBase> {
@@ -45,21 +51,25 @@ export interface AuthMethodPlugin<
   RegisterInput extends { method: Method },
   AuthenticateInput extends { method: Method },
   U extends UserBase,
-  ExposedApi extends object = {},
-> extends BasePlugin<Method, U, ExposedApi> {
+  ExposedApi extends object = never,
+  SupportsRegister extends boolean = boolean,
+  HasApi extends boolean = boolean,
+> extends BasePlugin<Method, U, ExposedApi, HasApi> {
   kind: "auth_method";
   supports: {
-    register: boolean;
+    register: SupportsRegister;
   };
   validators?: {
     authenticate?: (input: unknown) => AuthenticateInput;
-    register?: (input: unknown) => RegisterInput;
+    register?: SupportsRegister extends true ? (input: unknown) => RegisterInput : never;
   };
   issueFields?: {
     authenticate: readonly Extract<keyof AuthenticateInput, string>[];
-    register?: readonly Extract<keyof RegisterInput, string>[];
+    register?: SupportsRegister extends true ? readonly Extract<keyof RegisterInput, string>[] : never;
   };
-  register?: (ctx: AuthPluginContext<U>, input: RegisterInput) => Promise<OperationResult<{ user: U }>>;
+  register?: SupportsRegister extends true
+    ? (ctx: AuthPluginContext<U>, input: RegisterInput) => Promise<OperationResult<{ user: U }>>
+    : never;
   authenticate: (ctx: AuthPluginContext<U>, input: AuthenticateInput) => Promise<OperationResult<{ user: U }>>;
   completePendingProfile?: (
     ctx: AuthPluginContext<U>,
@@ -70,8 +80,9 @@ export interface AuthMethodPlugin<
 export interface DomainPlugin<
   Method extends string,
   U extends UserBase,
-  ExposedApi extends object = {},
-> extends BasePlugin<Method, U, ExposedApi> {
+  ExposedApi extends object = never,
+  HasApi extends boolean = boolean,
+> extends BasePlugin<Method, U, ExposedApi, HasApi> {
   kind: "domain";
 }
 
@@ -236,9 +247,11 @@ export interface OrganizationsPluginConfig<
   handlers: OrganizationsPluginHandlers<O, Role, M, Permission, Feature, LimitKey>;
 }
 
-export type StripePlansResolver<Feature extends string, LimitKey extends string> =
-  | readonly StripePlan<Feature, LimitKey>[]
-  | (() => Promise<readonly StripePlan<Feature, LimitKey>[]>);
+export type StripePlansResolver<
+  Feature extends string,
+  LimitKey extends string,
+  Plans extends readonly StripePlan<Feature, LimitKey>[] = readonly StripePlan<Feature, LimitKey>[],
+> = Plans | (() => Promise<Plans>);
 
 export type AuthSecurityRateLimitScope =
   | "discover"
@@ -258,35 +271,48 @@ export interface AuthSecurityConfig {
   oauth2IdempotencyTtlSeconds?: number;
 }
 
-export type AnyMethodPlugin<U extends UserBase> = AuthMethodPlugin<string, any, any, U, any>;
-export type AnyDomainPlugin<U extends UserBase> = DomainPlugin<string, U, any>;
+export type AnyMethodPlugin<U extends UserBase> = AuthMethodPlugin<string, any, any, U, any, boolean, boolean>;
+export type AnyDomainPlugin<U extends UserBase> = DomainPlugin<string, U, any, boolean>;
 export type AnyPlugin<U extends UserBase> = AnyMethodPlugin<U> | AnyDomainPlugin<U>;
 
-type MethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<P[number], AnyMethodPlugin<any>>;
+type MethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<P[number], { kind: "auth_method" }>;
+type RegisterCapableMethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<MethodPlugins<P>, { supports: { register: true } }>;
+type PluginExposedApi<Plugin> = Plugin extends { __pluginApiBrand?: infer ExposedApi } ? ExposedApi : never;
+type PluginMethodName<Plugin> = Plugin extends { method: infer Method extends string } ? Method : never;
 
 export type RegisterInputFromPlugins<P extends readonly AnyPlugin<any>[]> =
-  MethodPlugins<P> extends infer Pl
-    ? Pl extends { supports: { register: true } }
-      ? Pl extends AuthMethodPlugin<any, infer R, any, any, any>
+  RegisterCapableMethodPlugins<P> extends infer Pl
+      ? Pl extends { supports: { register: true } }
+      ? Pl extends AuthMethodPlugin<any, infer R, any, any, any, true, any>
         ? R
         : never
       : never
     : never;
 
 export type AuthenticateInputFromPlugins<P extends readonly AnyPlugin<any>[]> =
-  MethodPlugins<P> extends AuthMethodPlugin<any, any, infer A, any, any> ? A : never;
+  MethodPlugins<P> extends infer Pl
+    ? Pl extends AuthMethodPlugin<any, any, infer A, any, any, any, any>
+      ? A
+      : never
+    : never;
+
+export type PluginApiForMethod<P extends readonly AnyPlugin<any>[], M extends P[number]["method"]> = Exclude<
+  PluginExposedApi<Extract<P[number], { method: M }>>,
+  null
+>;
+
+export type PluginMethodsWithApi<P extends readonly AnyPlugin<any>[]> =
+  P[number]["method"] extends infer Method
+    ? Method extends P[number]["method"]
+      ? [PluginApiForMethod<P, Method>] extends [never]
+        ? never
+        : Method
+      : never
+    : never;
 
 export type PluginApiMap<P extends readonly AnyPlugin<any>[]> = {
-  [M in P[number]["method"]]: Extract<P[number], { method: M }> extends {
-    createApi: (...args: any[]) => infer Api;
-  }
-    ? Api
-    : never;
+  [M in PluginMethodsWithApi<P>]: PluginApiForMethod<P, M>;
 };
-
-export type PluginMethodsWithApi<P extends readonly AnyPlugin<any>[]> = {
-  [M in keyof PluginApiMap<P>]: PluginApiMap<P>[M] extends never ? never : M;
-}[keyof PluginApiMap<P>];
 
 export interface AuthConfig<U extends UserBase, P extends readonly AnyPlugin<U>[]> {
   adapters: CoreAdapters<U>;
@@ -311,7 +337,7 @@ export interface AuthPublicApi<U extends UserBase, P extends readonly AnyPlugin<
   ): Promise<OperationResult<DiscoverAccountDecision>>;
   authenticate(input: AuthenticateInputFromPlugins<P>, request?: AuthRequestContext): Promise<AuthResult<U>>;
   register(input: RegisterInputFromPlugins<P>, request?: AuthRequestContext): Promise<AuthResult<U>>;
-  method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiMap<P>[M];
+  method<M extends PluginMethodsWithApi<P>>(method: M): PluginApiForMethod<P, M>;
   verifySecondFactor(input: TwoFactorVerifyInput, request?: AuthRequestContext): Promise<AuthResult<U>>;
   completeProfile(input: CompleteProfileInput<U>, request?: AuthRequestContext): Promise<AuthResult<U>>;
   validateSession(

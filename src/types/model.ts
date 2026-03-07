@@ -140,7 +140,7 @@ export type ProfileCompletionState<U extends UserBase> = {
   email?: string;
   missingFields: readonly Extract<keyof U, string>[];
   prefill: Partial<U>;
-  continuation?: Record<string, unknown>;
+  continuation?: Record<string, unknown> | null;
 };
 
 export type CompleteProfileInput<U extends UserBase> = {

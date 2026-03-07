@@ -55,7 +55,7 @@ const recoveryHash = (userId: string, code: string): string => secretHash(code.t
 
 export const twoFactorPlugin = <U extends UserBase>(
   config: TwoFactorPluginConfig<U>,
-): DomainPlugin<"two_factor", U, TwoFactorPluginApi<U>> => {
+): DomainPlugin<"two_factor", U, TwoFactorPluginApi<U>, true> => {
   const enrollments = new Map<string, Enrollment>();
   const challengeTtl = config.challengeTtlSeconds ?? 5 * 60;
   const issuer = config.issuer ?? "OglofusAuth";

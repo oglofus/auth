@@ -14,7 +14,7 @@ export type PasskeyPluginConfig<U extends UserBase, K extends keyof U> = {
 
 export const passkeyPlugin = <U extends UserBase, K extends keyof U>(
   config: PasskeyPluginConfig<U, K>,
-): AuthMethodPlugin<"passkey", PasskeyRegisterInput<U, K>, PasskeyAuthenticateInput, U> => ({
+): AuthMethodPlugin<"passkey", PasskeyRegisterInput<U, K>, PasskeyAuthenticateInput, U, never, true, false> => ({
   kind: "auth_method",
   method: "passkey",
   version: "2.0.0",

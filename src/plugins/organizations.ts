@@ -112,7 +112,8 @@ export const organizationsPlugin = <
 ): DomainPlugin<
   "organizations",
   U,
-  OrganizationsPluginApi<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>
+  OrganizationsPluginApi<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>,
+  true
 > => {
   const inviteTtl = config.inviteTtlSeconds ?? 7 * 24 * 60 * 60;
   const ownerRoles = findOwnerRoles(config.handlers.roles);
@@ -120,7 +121,8 @@ export const organizationsPlugin = <
   const plugin: DomainPlugin<
     "organizations",
     U,
-    OrganizationsPluginApi<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>
+    OrganizationsPluginApi<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>,
+    true
   > & {
     __organizationConfig: OrganizationsPluginOptions<O, Role, M, Permission, Feature, LimitKey, RequiredOrgFields>;
   } = {
