@@ -14,9 +14,17 @@ export const createToken = (size = 32): string => randomBytes(size).toString("ba
 
 export const createNumericCode = (length = 6): string => {
   const digits = "0123456789";
+  const limit = 256 - (256 % digits.length);
   let out = "";
   for (let i = 0; i < length; i += 1) {
-    const idx = (randomBytes(1)[0] ?? 0) % digits.length;
+    let idx: number | undefined;
+    while (idx === undefined) {
+      const byte = randomBytes(1)[0];
+      if (byte === undefined || byte >= limit) {
+        continue;
+      }
+      idx = byte % digits.length;
+    }
     out += digits[idx] ?? "0";
   }
   return out;
