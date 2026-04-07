@@ -56,7 +56,9 @@ jobs:
       - name: Publish to NPM
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: vp pm publish --access public -- --provenance
+        # Release workflows check out the tagged commit in detached HEAD state.
+        # Disable pnpm's branch attachment check so the tagged release can publish.
+        run: vp pm publish --access public --no-git-checks -- --provenance
 
   publish-gpr:
     if: github.event_name == 'release' && github.event.action == 'published'
@@ -81,6 +83,6 @@ jobs:
           registry-url: https://npm.pkg.github.com/
 
       - name: Publish to Github Packages
-        run: vp pm publish
+        run: vp pm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
