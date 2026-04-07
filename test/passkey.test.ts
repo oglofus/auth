@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import { OglofusAuth, passkeyPlugin, type PasskeyAdapter, type UserBase } from "../src/index.js";
 import { createSessionStore, createUserStore } from "./helpers/in-memory.js";

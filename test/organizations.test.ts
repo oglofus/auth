@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import Stripe from "stripe";
 import {
@@ -199,13 +199,13 @@ const createOrgEnv = () => {
     getLimitOverrides: async (organizationId) => limitOverrides.get(organizationId) ?? {},
     setFeatureOverride: async (organizationId, feature, enabled) => {
       featureOverrides.set(organizationId, {
-        ...(featureOverrides.get(organizationId) ?? {}),
+        ...featureOverrides.get(organizationId),
         [feature]: enabled,
       });
     },
     setLimitOverride: async (organizationId, key, value) => {
       limitOverrides.set(organizationId, {
-        ...(limitOverrides.get(organizationId) ?? {}),
+        ...limitOverrides.get(organizationId),
         [key]: value,
       });
     },
@@ -1230,13 +1230,13 @@ test("organizations merge stripe entitlements before manual overrides", async ()
             getLimitOverrides: async (organizationId) => limitOverrides.get(organizationId) ?? {},
             setFeatureOverride: async (organizationId, feature, enabled) => {
               featureOverrides.set(organizationId, {
-                ...(featureOverrides.get(organizationId) ?? {}),
+                ...featureOverrides.get(organizationId),
                 [feature]: enabled,
               });
             },
             setLimitOverride: async (organizationId, key, value) => {
               limitOverrides.set(organizationId, {
-                ...(limitOverrides.get(organizationId) ?? {}),
+                ...limitOverrides.get(organizationId),
                 [key]: value,
               });
             },

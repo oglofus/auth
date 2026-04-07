@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import {
   OglofusAuth,
@@ -14,7 +14,10 @@ interface User extends UserBase {
   given_name: string;
 }
 
-const createMagicLinkEnv = (options?: { outbox?: ReturnType<typeof createOutboxStore>["adapter"]; deliveryAccepted?: boolean }) => {
+const createMagicLinkEnv = (options?: {
+  outbox?: ReturnType<typeof createOutboxStore>["adapter"];
+  deliveryAccepted?: boolean;
+}) => {
   const users = createUserStore<User>();
   const sessions = createSessionStore();
   const tokens = new Map<string, Awaited<ReturnType<MagicLinkAdapter["createToken"]>>>();

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import {
   OglofusAuth,
@@ -37,6 +37,9 @@ const decodeOtpauthSecret = (value: string): string => {
 
   return Buffer.from(bytes).toString("base64url");
 };
+
+const getPendingAuthId = (meta: Record<string, unknown> | undefined): string =>
+  typeof meta?.pendingAuthId === "string" ? meta.pendingAuthId : "";
 
 const createTwoFactorEnv = (options?: { requiredMethods?: readonly ("totp" | "recovery_code")[] }) => {
   const users = createUserStore<User>();
@@ -180,7 +183,7 @@ test("two-factor plugin gates session issuance until verification", async () => 
   }
 
   assert.equal(step1.error.code, "TWO_FACTOR_REQUIRED");
-  const pendingAuthId = String(step1.error.meta?.pendingAuthId ?? "");
+  const pendingAuthId = getPendingAuthId(step1.error.meta);
   assert.ok(pendingAuthId.length > 0);
 
   const code = testHelpers.generateTotp(secret, new Date());
@@ -230,7 +233,7 @@ test("two-factor verification rejects invalid code", async () => {
 
   const step2 = await auth.verifySecondFactor({
     method: "totp",
-    pendingAuthId: String(step1.error.meta?.pendingAuthId ?? ""),
+    pendingAuthId: getPendingAuthId(step1.error.meta),
     code: "000000",
   });
 
@@ -272,7 +275,7 @@ test("two-factor verification rejects expired and consumed challenges", async ()
     return;
   }
 
-  const pendingAuthId = String(step1.error.meta?.pendingAuthId ?? "");
+  const pendingAuthId = getPendingAuthId(step1.error.meta);
   const pending = pendingChallenges.get(pendingAuthId);
   if (pending) {
     pendingChallenges.set(pendingAuthId, {
@@ -301,7 +304,7 @@ test("two-factor verification rejects expired and consumed challenges", async ()
     return;
   }
 
-  const nextPendingId = String(again.error.meta?.pendingAuthId ?? "");
+  const nextPendingId = getPendingAuthId(again.error.meta);
   const validCode = testHelpers.generateTotp(secret, new Date());
   const first = await auth.verifySecondFactor({
     method: "totp",
@@ -389,7 +392,7 @@ test("two-factor supports recovery codes and enrollment APIs", async () => {
   const recovery = regenerated.data.codes[0]!;
   const step2 = await auth.verifySecondFactor({
     method: "recovery_code",
-    pendingAuthId: String(step1.error.meta?.pendingAuthId ?? ""),
+    pendingAuthId: getPendingAuthId(step1.error.meta),
     code: recovery,
   });
   assert.equal(step2.ok, true);
@@ -406,7 +409,7 @@ test("two-factor supports recovery codes and enrollment APIs", async () => {
 
   const totpStep2 = await auth.verifySecondFactor({
     method: "totp",
-    pendingAuthId: String(totpStep1.error.meta?.pendingAuthId ?? ""),
+    pendingAuthId: getPendingAuthId(totpStep1.error.meta),
     code: testHelpers.generateTotp(storedSecret, new Date()),
   });
   assert.equal(totpStep2.ok, true);
@@ -422,7 +425,7 @@ test("two-factor supports recovery codes and enrollment APIs", async () => {
   }
   const invalidRecovery = await auth.verifySecondFactor({
     method: "recovery_code",
-    pendingAuthId: String(retry.error.meta?.pendingAuthId ?? ""),
+    pendingAuthId: getPendingAuthId(retry.error.meta),
     code: recovery,
   });
   assert.equal(invalidRecovery.ok, false);
@@ -511,7 +514,7 @@ test("two-factor returns plugin misconfigured when required adapters are missing
 
   const verifyTotp = await auth.verifySecondFactor({
     method: "totp",
-    pendingAuthId: String(gated.error.meta?.pendingAuthId ?? ""),
+    pendingAuthId: getPendingAuthId(gated.error.meta),
     code: "000000",
   });
   assert.equal(verifyTotp.ok, false);

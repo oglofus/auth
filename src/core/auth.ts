@@ -21,7 +21,6 @@ import type {
   AuthSecurityRateLimitScope,
   AuthenticateInputFromPlugins,
   PluginApiForMethod,
-  PluginApiMap,
   PluginMethodsWithApi,
   RegisterInputFromPlugins,
   TwoFactorPluginApi,

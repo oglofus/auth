@@ -31,7 +31,7 @@ export interface RateLimiterAdapter {
 }
 
 export interface AuditRecord {
-  action: "register" | "authenticate" | "session_revoke" | string;
+  action: string;
   userId?: string;
   method?: string;
   success: boolean;
@@ -154,7 +154,7 @@ export interface OrganizationInviteDeliveryHandler<Role extends string = string>
   send(payload: OrganizationInviteDeliveryPayload<Role>): Promise<DeliveryResult>;
 }
 
-export type DeliveryChannel = "email" | "sms" | "push" | string;
+export type DeliveryChannel = string;
 
 export interface DeliveryResult {
   accepted: boolean;

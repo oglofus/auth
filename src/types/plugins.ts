@@ -276,13 +276,15 @@ export type AnyDomainPlugin<U extends UserBase> = DomainPlugin<string, U, any, b
 export type AnyPlugin<U extends UserBase> = AnyMethodPlugin<U> | AnyDomainPlugin<U>;
 
 type MethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<P[number], { kind: "auth_method" }>;
-type RegisterCapableMethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<MethodPlugins<P>, { supports: { register: true } }>;
+type RegisterCapableMethodPlugins<P extends readonly AnyPlugin<any>[]> = Extract<
+  MethodPlugins<P>,
+  { supports: { register: true } }
+>;
 type PluginExposedApi<Plugin> = Plugin extends { __pluginApiBrand?: infer ExposedApi } ? ExposedApi : never;
-type PluginMethodName<Plugin> = Plugin extends { method: infer Method extends string } ? Method : never;
 
 export type RegisterInputFromPlugins<P extends readonly AnyPlugin<any>[]> =
   RegisterCapableMethodPlugins<P> extends infer Pl
-      ? Pl extends { supports: { register: true } }
+    ? Pl extends { supports: { register: true } }
       ? Pl extends AuthMethodPlugin<any, infer R, any, any, any, true, any>
         ? R
         : never
@@ -301,14 +303,13 @@ export type PluginApiForMethod<P extends readonly AnyPlugin<any>[], M extends P[
   null
 >;
 
-export type PluginMethodsWithApi<P extends readonly AnyPlugin<any>[]> =
-  P[number]["method"] extends infer Method
-    ? Method extends P[number]["method"]
-      ? [PluginApiForMethod<P, Method>] extends [never]
-        ? never
-        : Method
-      : never
-    : never;
+export type PluginMethodsWithApi<P extends readonly AnyPlugin<any>[]> = P[number]["method"] extends infer Method
+  ? Method extends P[number]["method"]
+    ? [PluginApiForMethod<P, Method>] extends [never]
+      ? never
+      : Method
+    : never
+  : never;
 
 export type PluginApiMap<P extends readonly AnyPlugin<any>[]> = {
   [M in PluginMethodsWithApi<P>]: PluginApiForMethod<P, M>;

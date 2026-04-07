@@ -28,7 +28,15 @@ const createRateLimitedError = (retryAfterSeconds?: number): AuthError =>
 
 export const magicLinkPlugin = <U extends UserBase, K extends keyof U>(
   config: MagicLinkPluginConfig<U, K>,
-): AuthMethodPlugin<"magic_link", MagicLinkRegisterInput<U, K>, MagicLinkAuthenticateInput, U, MagicLinkPluginApi, true, true> => {
+): AuthMethodPlugin<
+  "magic_link",
+  MagicLinkRegisterInput<U, K>,
+  MagicLinkAuthenticateInput,
+  U,
+  MagicLinkPluginApi,
+  true,
+  true
+> => {
   const ttl = config.tokenTtlSeconds ?? 15 * 60;
 
   const verifyToken = async (

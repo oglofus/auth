@@ -1,6 +1,6 @@
 import { OAuth2Tokens } from "arctic";
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import { OglofusAuth, oauth2Plugin, type OAuth2AccountAdapter, type UserBase } from "../src/index.js";
 import {
@@ -22,6 +22,9 @@ const createTokens = () =>
     token_type: "bearer",
   });
 
+const getPendingProfileId = (meta: Record<string, unknown> | undefined): string =>
+  typeof meta?.pendingProfileId === "string" ? meta.pendingProfileId : "";
+
 test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProfile links the account before consume", async () => {
   const users = createUserStore<User>();
   const sessions = createSessionStore();
@@ -29,7 +32,7 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
   const order: string[] = [];
   const redirectUris: string[] = [];
 
-  const originalConsume = pending.adapter.consume;
+  const originalConsume = pending.adapter.consume.bind(pending.adapter);
   pending.adapter.consume = async (pendingProfileId) => {
     order.push("consume");
     return originalConsume(pendingProfileId);
@@ -89,7 +92,7 @@ test("oauth2 missing fields returns PROFILE_COMPLETION_REQUIRED and completeProf
   }
 
   assert.equal(step1.error.code, "PROFILE_COMPLETION_REQUIRED");
-  const pendingProfileId = String(step1.error.meta?.pendingProfileId ?? "");
+  const pendingProfileId = getPendingProfileId(step1.error.meta);
   assert.ok(pendingProfileId.length > 0);
 
   const step2 = await auth.completeProfile({
@@ -653,7 +656,7 @@ test("completeProfile surfaces consume races and updates existing users by email
     consumedAt: null,
   });
 
-  const originalConsume = pending.adapter.consume;
+  const originalConsume = pending.adapter.consume.bind(pending.adapter);
   pending.adapter.consume = async (pendingProfileId) => {
     if (pendingProfileId === "pending_race") {
       return false;

@@ -224,7 +224,7 @@ export const organizationsPlugin = <
 
           const run = async () => {
             const orgPayload = {
-              ...(input.profile ?? {}),
+              ...input.profile,
               slug: input.slug,
               name: input.name,
             } as Omit<O, "id" | "createdAt" | "updatedAt">;
@@ -365,7 +365,7 @@ export const organizationsPlugin = <
             membership,
           });
         },
-        setActiveOrganization: async (input, request) => {
+        setActiveOrganization: async (input, _request) => {
           const session = await ctx.adapters.sessions.findById(input.sessionId);
           if (!session) {
             return errorOperation(new AuthError("SESSION_NOT_FOUND", "Session not found.", 404));

@@ -34,7 +34,7 @@ type StripePluginHandlers<Feature extends string, LimitKey extends string> = {
   trials?: StripeTrialUsageAdapter;
 };
 
-export type StripePluginConfig<U extends UserBase, Feature extends string, LimitKey extends string> = {
+export type StripePluginConfig<Feature extends string, LimitKey extends string> = {
   stripe: Stripe;
   webhookSecret: string;
   plans: StripePlansResolver<Feature, LimitKey>;
@@ -42,11 +42,17 @@ export type StripePluginConfig<U extends UserBase, Feature extends string, Limit
   customerMode?: "user" | "organization" | "both";
 };
 
-type StripePlanCatalogEntry<Feature extends string, LimitKey extends string> = Omit<StripePlan<Feature, LimitKey>, "scope"> & {
+type StripePlanCatalogEntry<Feature extends string, LimitKey extends string> = Omit<
+  StripePlan<Feature, LimitKey>,
+  "scope"
+> & {
   scope: StripeSubject["kind"];
 };
 
-type StripePlanCatalog<Feature extends string, LimitKey extends string> = readonly StripePlanCatalogEntry<Feature, LimitKey>[];
+type StripePlanCatalog<Feature extends string, LimitKey extends string> = readonly StripePlanCatalogEntry<
+  Feature,
+  LimitKey
+>[];
 
 const subjectId = (subject: StripeSubject): string =>
   subject.kind === "user" ? subject.userId : subject.organizationId;
@@ -63,7 +69,7 @@ const metadataForSubject = (
   billingCycle: StripeBillingCycle,
   metadata?: Record<string, string>,
 ): Record<string, string> => ({
-  ...(metadata ?? {}),
+  ...metadata,
   [SUBJECT_KIND_KEY]: subject.kind,
   [SUBJECT_ID_KEY]: subjectId(subject),
   [PLAN_KEY_KEY]: planKey,
@@ -88,7 +94,7 @@ const toMetadataRecord = (metadata?: Stripe.Metadata | null): Record<string, str
 };
 
 const isAllowedByCustomerMode = (
-  customerMode: NonNullable<StripePluginConfig<any, any, any>["customerMode"]>,
+  customerMode: NonNullable<StripePluginConfig<any, any>["customerMode"]>,
   subject: StripeSubject,
 ): boolean => {
   if (customerMode === "both") {
@@ -100,7 +106,7 @@ const isAllowedByCustomerMode = (
 
 const validatePlan = <Feature extends string, LimitKey extends string>(
   plan: StripePlan<Feature, LimitKey>,
-  customerMode: NonNullable<StripePluginConfig<any, Feature, LimitKey>["customerMode"]>,
+  customerMode: NonNullable<StripePluginConfig<Feature, LimitKey>["customerMode"]>,
 ) => {
   if (!plan.prices.monthly && !plan.prices.annual) {
     throw new AuthError("PLUGIN_MISCONFIGURED", `Stripe plan '${plan.key}' must define at least one price.`, 500);
@@ -158,7 +164,7 @@ const withSeatLimit = <LimitKey extends string>(
 
 const validatePlans = <Feature extends string, LimitKey extends string>(
   plans: readonly StripePlan<Feature, LimitKey>[],
-  customerMode: NonNullable<StripePluginConfig<any, Feature, LimitKey>["customerMode"]>,
+  customerMode: NonNullable<StripePluginConfig<Feature, LimitKey>["customerMode"]>,
   trials: StripeTrialUsageAdapter | undefined,
 ) => {
   const keys = new Set<string>();
@@ -187,9 +193,9 @@ export const stripePlugin = <
   U extends UserBase,
   Feature extends string,
   LimitKey extends string,
-  const Plans extends StripePlanCatalog<Feature, LimitKey>,
+  const Plans extends StripePlanCatalog<Feature, LimitKey> = StripePlanCatalog<Feature, LimitKey>,
 >(
-  config: Omit<StripePluginConfig<U, Feature, LimitKey>, "plans"> & {
+  config: Omit<StripePluginConfig<Feature, LimitKey>, "plans"> & {
     plans: StripePlansResolver<Feature, LimitKey, Plans>;
   },
 ): DomainPlugin<"stripe", U, StripePluginApi<Feature, LimitKey>, true> => {
@@ -352,8 +358,8 @@ export const stripePlugin = <
     }
 
     return {
-      features: { ...(plan.features ?? {}) },
-      limits: withSeatLimit({ ...(plan.limits ?? {}) }, seats, plan.seats?.enabled ? plan.seats.limitKey : undefined),
+      features: { ...plan.features },
+      limits: withSeatLimit({ ...plan.limits }, seats, plan.seats?.enabled ? plan.seats.limitKey : undefined),
     };
   };
 
@@ -377,6 +383,9 @@ export const stripePlugin = <
     return existing.subject;
   };
 
+  const stripeCustomerId = (customer: Stripe.Subscription["customer"]): string =>
+    typeof customer === "string" ? customer : customer.id;
+
   const upsertSubscriptionSnapshot = async (
     subscription: Stripe.Subscription,
   ): Promise<StripeSubscriptionSnapshot<Feature, LimitKey>> => {
@@ -391,7 +400,8 @@ export const stripePlugin = <
 
     const metadata = toMetadataRecord(subscription.metadata);
     const { plan, billingCycle } = await resolvePlanByPriceId(firstItem.price.id, metadata[PLAN_KEY_KEY]);
-    const subject = await resolveSubjectFromMetadata(metadata, String(subscription.customer));
+    const customerId = stripeCustomerId(subscription.customer);
+    const subject = await resolveSubjectFromMetadata(metadata, customerId);
     const existing = await config.handlers.subscriptions.findByStripeSubscriptionId(subscription.id);
     const normalizedStatus = normalizeStatus(subscription.status);
     const seats = typeof firstItem.quantity === "number" ? firstItem.quantity : null;
@@ -400,7 +410,7 @@ export const stripePlugin = <
     const snapshot: StripeSubscriptionSnapshot<Feature, LimitKey> = {
       id: existing?.id ?? createId(),
       subject,
-      stripeCustomerId: String(subscription.customer),
+      stripeCustomerId: customerId,
       stripeSubscriptionId: subscription.id,
       stripePriceId: firstItem.price.id,
       planKey: plan.key,
@@ -488,17 +498,17 @@ export const stripePlugin = <
 
           const customer = await ensureCustomer(ctx, input.subject, ctx.now());
           const metadata = metadataForSubject(input.subject, plan.key, input.billingCycle, {
-            ...(plan.metadata ?? {}),
-            ...(input.metadata ?? {}),
+            ...plan.metadata,
+            ...input.metadata,
           });
 
-          const session = await config.stripe.checkout.sessions.create({
+          const sessionParams = {
             mode: "subscription",
             customer: customer.stripeCustomerId,
             success_url: input.successUrl,
             cancel_url: input.cancelUrl,
             client_reference_id: referenceForSubject(input.subject),
-            locale: input.locale as Stripe.Checkout.SessionCreateParams.Locale | undefined,
+            ...(input.locale ? { locale: input.locale } : {}),
             line_items: [
               {
                 price: price.priceId,
@@ -510,7 +520,8 @@ export const stripePlugin = <
               metadata,
               trial_period_days: plan.trial?.days,
             },
-          });
+          };
+          const session = await config.stripe.checkout.sessions.create(sessionParams as never);
 
           if (!session.url) {
             return errorOperation(
@@ -538,11 +549,12 @@ export const stripePlugin = <
             return errorOperation(new AuthError("CUSTOMER_NOT_FOUND", "Billing customer not found.", 404));
           }
 
-          const session = await config.stripe.billingPortal.sessions.create({
+          const sessionParams = {
             customer: customer.stripeCustomerId,
             return_url: input.returnUrl,
-            locale: input.locale as Stripe.BillingPortal.SessionCreateParams.Locale | undefined,
-          });
+            ...(input.locale ? { locale: input.locale } : {}),
+          };
+          const session = await config.stripe.billingPortal.sessions.create(sessionParams as never);
 
           return successOperation({ url: session.url });
         } catch (error) {
@@ -672,8 +684,8 @@ export const stripePlugin = <
           }
 
           const metadata = metadataForSubject(input.subject, targetPlan.key, input.billingCycle, {
-            ...(targetPlan.metadata ?? {}),
-            ...(snapshot.metadata ?? {}),
+            ...targetPlan.metadata,
+            ...snapshot.metadata,
           });
           const updated = await config.stripe.subscriptions.update(snapshot.stripeSubscriptionId, {
             cancel_at_period_end: false,

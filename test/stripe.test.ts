@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 
 import Stripe from "stripe";
 
 import {
   OglofusAuth,
   stripePlugin,
+  type StripePlan,
   type StripeSubject,
   type StripeSubscriptionSnapshot,
   type UserBase,
@@ -196,10 +197,7 @@ const createFakeStripeClient = () => {
 
 const createSignedEvent = (stripe: Stripe, event: Stripe.Event): { payload: string; signature: string } => {
   const payload = JSON.stringify(event);
-  const signature = stripe.webhooks.generateTestHeaderString({
-    payload,
-    secret: WEBHOOK_SECRET,
-  });
+  const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET } as never);
   return { payload, signature };
 };
 
@@ -208,8 +206,8 @@ const createAuth = (options?: {
   includeUser?: boolean;
   includeOrganizationPlan?: boolean;
 }) => {
-  const users = createUserStore<User>([
-    ...(options?.includeUser === false
+  const users = createUserStore<User>(
+    options?.includeUser === false
       ? []
       : [
           {
@@ -220,11 +218,70 @@ const createAuth = (options?: {
             createdAt: new Date(),
             updatedAt: new Date(),
           },
-        ]),
-  ]);
+        ],
+  );
   const sessions = createSessionStore();
   const billing = createStripeBillingStore<Feature, LimitKey>();
   const stripeState = createFakeStripeClient();
+  const starterPlan = {
+    key: "starter",
+    displayName: "Starter",
+    scope: "user",
+    prices: {
+      monthly: { priceId: "price_starter_monthly" },
+    },
+    trial: {
+      days: 14,
+    },
+    features: {
+      analytics: true,
+    },
+    limits: {
+      projects: 3,
+    },
+  } satisfies StripePlan<Feature, LimitKey>;
+  const organizationPlans: readonly StripePlan<Feature, LimitKey>[] =
+    options?.includeOrganizationPlan === false
+      ? []
+      : [
+          {
+            key: "team",
+            displayName: "Team",
+            scope: "organization",
+            prices: {
+              monthly: { priceId: "price_team_monthly" },
+              annual: { priceId: "price_team_annual" },
+            },
+            seats: {
+              enabled: true,
+              minimum: 2,
+              limitKey: "seats",
+            },
+            features: {
+              analytics: true,
+              priority_support: true,
+            },
+            limits: {
+              projects: 20,
+            },
+          } satisfies StripePlan<Feature, LimitKey>,
+        ];
+  const proPlan = {
+    key: "pro",
+    displayName: "Pro",
+    scope: "user",
+    prices: {
+      annual: { priceId: "price_pro_annual" },
+    },
+    features: {
+      analytics: true,
+      priority_support: true,
+    },
+    limits: {
+      projects: 100,
+    },
+  } satisfies StripePlan<Feature, LimitKey>;
+  const plans: readonly StripePlan<Feature, LimitKey>[] = [starterPlan, ...organizationPlans, proPlan];
 
   const auth = new OglofusAuth({
     adapters: {
@@ -236,65 +293,7 @@ const createAuth = (options?: {
         stripe: stripeState.stripe,
         webhookSecret: WEBHOOK_SECRET,
         customerMode: options?.customerMode ?? "both",
-        plans: [
-          {
-            key: "starter",
-            displayName: "Starter",
-            scope: "user",
-            prices: {
-              monthly: { priceId: "price_starter_monthly" },
-            },
-            trial: {
-              days: 14,
-            },
-            features: {
-              analytics: true,
-            },
-            limits: {
-              projects: 3,
-            },
-          },
-          ...(options?.includeOrganizationPlan === false
-            ? []
-            : [
-                {
-                  key: "team",
-                  displayName: "Team",
-                  scope: "organization",
-                  prices: {
-                    monthly: { priceId: "price_team_monthly" },
-                    annual: { priceId: "price_team_annual" },
-                  },
-                  seats: {
-                    enabled: true,
-                    minimum: 2,
-                    limitKey: "seats",
-                  },
-                  features: {
-                    analytics: true,
-                    priority_support: true,
-                  },
-                  limits: {
-                    projects: 20,
-                  },
-                },
-              ]),
-          {
-            key: "pro",
-            displayName: "Pro",
-            scope: "user",
-            prices: {
-              annual: { priceId: "price_pro_annual" },
-            },
-            features: {
-              analytics: true,
-              priority_support: true,
-            },
-            limits: {
-              projects: 100,
-            },
-          },
-        ] as const,
+        plans,
         handlers: {
           customers: billing.customers,
           subscriptions: billing.subscriptions,
@@ -381,7 +380,7 @@ test("stripe checkout reuses customers and blocks repeat trial after cancellatio
 });
 
 test("stripe billing portal requires a customer and webhook signatures are validated", async () => {
-  const { auth, stripeState } = createAuth();
+  const { auth } = createAuth();
   const api = auth.method("stripe");
   const orgSubject: StripeSubject = { kind: "organization", organizationId: "org_1" };
 
