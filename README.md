@@ -25,6 +25,10 @@ pnpm add @oglofus/auth
 bun add @oglofus/auth
 ```
 
+```bash
+vp install @oglofus/auth
+```
+
 Optional for app-level integrations:
 
 - `arctic` for OAuth providers in your app code.
@@ -252,28 +256,17 @@ Use `discover(...)` to support login/register routing logic before full auth:
 
 `explicit` mode requires an `identity` adapter.
 
-## Examples
-
-See ready-to-copy integrations:
-
-- [`examples/nextjs-password`](./examples/nextjs-password)
-- [`examples/sveltekit-email-otp`](./examples/sveltekit-email-otp)
-- [`examples/oauth2-google-arctic`](./examples/oauth2-google-arctic)
-- [`examples/two-factor-totp-oslo`](./examples/two-factor-totp-oslo)
-- [`examples/stripe-user-billing`](./examples/stripe-user-billing)
-- [`examples/stripe-organization-billing`](./examples/stripe-organization-billing)
-
 ## Scripts
 
 ```bash
-pnpm run typecheck
-pnpm run test
-pnpm run build
+vp run typecheck
+vp run test
+vp run pack
 ```
 
 ## Development
 
-- Build: `pnpm run build` (outputs to `dist/`)
+- Build: `vp run build` (outputs to `dist/`)
 - TypeScript config: `tsconfig.json`
 
 ## License
